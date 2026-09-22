@@ -1,0 +1,5 @@
+{
+  "providers": [
+    { "id": "chatgpt", "display_name": "ChatGPT Web" }
+  ]
+}

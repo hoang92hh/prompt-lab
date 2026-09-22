@@ -1,0 +1,47 @@
+{
+  "manifest_version": 3,
+  "name": "MyTool Bridge Extension",
+  "version": "0.2.0",
+  "minimum_chrome_version": "120",
+  "description": "Localhost Bridge to a user-opened ChatGPT tab. No automatic login or model selection.",
+  "permissions": [
+    "alarms",
+    "storage"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1/*",
+    "https://chatgpt.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://chatgpt.com/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "core/content_runner.js",
+        "core/provider_factory.js",
+        "core/execution_errors.js",
+        "providers/base_provider.js",
+        "providers/chatgpt/chatgpt_provider.js",
+        "providers/chatgpt/chatgpt_selectors.js",
+        "providers/chatgpt/chatgpt_models.js"
+      ],
+      "matches": [
+        "https://chatgpt.com/*"
+      ]
+    }
+  ]
+}
