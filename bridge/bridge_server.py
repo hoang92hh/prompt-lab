@@ -6,6 +6,7 @@ from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import unquote, urlsplit
 from .job_manager import JobManager
+from .project_store import ProjectStore
 from .protocol import ProtocolError, fail
 
 MAX_BODY_BYTES = 1024 * 1024
@@ -26,6 +27,7 @@ class BridgeServer(ThreadingHTTPServer):
 
     def __init__(self, port: int = 8765, poll_timeout: float = 20):
         self.manager = JobManager()
+        self.projects = ProjectStore()
         self.poll_timeout = poll_timeout
         super().__init__(("127.0.0.1", port), BridgeHandler)
 
@@ -83,7 +85,11 @@ class BridgeHandler(BaseHTTPRequestHandler):
             fail(400, "INVALID_REQUEST", "Query parameters are not supported.")
         path = url.path
         manager = self.server.manager
-        if path == "/":
+        if path == "/api/projects":
+            if self.command != "GET":
+                fail(405, "METHOD_NOT_ALLOWED", "Use GET for projects.")
+            self._send(200, {"projects": self.server.projects.list()})
+        elif path == "/":
             if self.command != "GET":
                 fail(405, "METHOD_NOT_ALLOWED", "Use GET for the application page.")
             body = (Path(__file__).parent.parent / "app" / "gui" / "index.html").read_bytes()
@@ -97,7 +103,12 @@ class BridgeHandler(BaseHTTPRequestHandler):
         elif path == "/api/jobs":
             if self.command != "POST":
                 fail(405, "METHOD_NOT_ALLOWED", "Use POST for job creation.")
-            self._send(201, manager.enqueue(self._body()))
+            request = self._body()
+            if isinstance(request, dict) and request.get("project_id"):
+                project = self.server.projects.get(request["project_id"])
+                if request.get("project_url") != project["url"]:
+                    fail(400, "INVALID_REQUEST", "Project URL does not match the saved project.")
+            self._send(201, manager.enqueue(request))
         elif path == "/api/jobs/next":
             if self.command != "GET":
                 fail(405, "METHOD_NOT_ALLOWED", "Use GET for claiming jobs.")
@@ -111,7 +122,17 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 fail(404, "NOT_FOUND", "Unknown endpoint; URL-encode job IDs.")
             job_id = unquote(raw_id, encoding="utf-8", errors="strict")
             if result_route and self.command == "POST":
-                self._send(200, manager.finish(job_id, self._body()))
+                response = self._body()
+                request = manager.store.record(job_id)["request"]
+                if isinstance(response, dict) and response.get("status") == "completed":
+                    if request["action"] == "create_project" and not response.get("project"):
+                        fail(400, "INVALID_REQUEST", "Project creation requires a confirmed project.")
+                    if request["action"] != "create_project" and response.get("project"):
+                        fail(400, "INVALID_REQUEST", "A prompt result cannot create a project.")
+                record = manager.finish(job_id, response)
+                if isinstance(response, dict) and response.get("status") == "completed" and response.get("project"):
+                    self.server.projects.save(response["project"])
+                self._send(200, record)
             elif not result_route and self.command == "GET":
                 self._send(200, manager.get(job_id))
             else:

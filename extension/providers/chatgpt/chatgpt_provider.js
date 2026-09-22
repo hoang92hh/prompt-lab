@@ -1,6 +1,6 @@
 import { BaseProvider } from "../base_provider.js";
 import { chatgptSelectors as S } from "./chatgpt_selectors.js";
-import { useCurrentModel } from "./chatgpt_models.js";
+import { selectChatGPTModel } from "./chatgpt_models.js";
 
 const error = (code, message) => Object.assign(new Error(message), { code });
 const normalize = (text) => text.replace(/\r\n?/g, "\n").trim();
@@ -47,8 +47,8 @@ export class ChatGPTProvider extends BaseProvider {
     return this.editable(composer) && !this.find(S.stop);
   }
 
-  async selectModel(model) {
-    useCurrentModel(model); // Explicit no-op for null/omitted only.
+  async selectModel(model, effort) {
+    await selectChatGPTModel(model, effort);
   }
 
   async setPrompt(content, options = {}) {

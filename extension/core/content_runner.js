@@ -1,8 +1,11 @@
+import { createProject } from "../providers/chatgpt/project_actions.js";
+import { chatgptSelectors as S } from "../providers/chatgpt/chatgpt_selectors.js";
 import { ProviderFactory } from "./provider_factory.js";
 import { failure, executionError } from "./execution_errors.js";
 
 const jobs = new Map();
 let activeJob = null;
+let projectChatOpening = false;
 const factory = new ProviderFactory();
 
 async function execute(job, record) {
@@ -13,7 +16,7 @@ async function execute(job, record) {
     if (!(await provider.isReady())) {
       throw executionError("PROVIDER_NOT_READY", "Log in and leave ChatGPT idle before starting.");
     }
-    await provider.selectModel(job.model);
+    await provider.selectModel(job.model, job.effort);
     await provider.setPrompt(job.content, job.options);
     await provider.sendPrompt();
     await provider.waitForResponse();
@@ -29,11 +32,40 @@ async function execute(job, record) {
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (sender.id !== chrome.runtime.id || !message?.type?.startsWith("MYTOOL_")) return;
   if (message.type === "MYTOOL_PING") {
-    sendResponse({ ready: true });
+    sendResponse({ ready: true, url: location.href });
+  } else if (message.type === "MYTOOL_PROJECT_READY") {
+    const composer = [...document.querySelectorAll(S.composer)].find(node =>
+      node.getClientRects().length > 0 &&
+      (node.isContentEditable || node.tagName === "TEXTAREA") &&
+      !node.disabled && node.getAttribute("aria-disabled") !== "true");
+    if (composer) {
+      sendResponse({ ready: true, url: location.href });
+      return;
+    }
+    if (!projectChatOpening && /\/project\/?$/.test(location.pathname)) {
+      const start = [...document.querySelectorAll("main button, main a")].find(node =>
+        node.getClientRects().length > 0 &&
+        /(new\s+chat|start.*chat|new\s+conversation|tr\u00f2\s+chuy\u1ec7n\s+m\u1edbi)/i
+          .test((node.innerText || node.getAttribute("aria-label") || "").trim()));
+      if (start) {
+        projectChatOpening = true;
+        start.click();
+        sendResponse({ ready: false, openingChat: true, url: location.href });
+        return;
+      }
+    }
+    sendResponse({ ready: false, url: location.href });
   } else if (message.type === "MYTOOL_STATUS") {
     const record = jobs.get(message.job_id);
     sendResponse(record ? { job_id: message.job_id, status: record.status, result: record.result, steps: record.steps }
       : { error: "EXECUTION_STATE_LOST", message: "No execution state in this document. Prompt will not be resent." });
+  } else if (message.type === "MYTOOL_CREATE_PROJECT") {
+    if (activeJob !== null) {
+      sendResponse({ error: "PROVIDER_NOT_READY", message: "This tab is already processing a job." });
+      return;
+    }
+    sendResponse({ accepted: true });
+    void createProject(message.name).catch(error => console.error("[MyTool] Project creation failed:", error));
   } else if (message.type === "MYTOOL_EXECUTE") {
     const job = message.job;
     if (!job || typeof job.job_id !== "string" || job.action !== "prompt") {

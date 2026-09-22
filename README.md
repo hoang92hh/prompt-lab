@@ -1,6 +1,6 @@
-﻿# MyTool
+# MyTool
 
-MyTool runs a local HTTP Bridge and opens its application UI at `http://127.0.0.1:8765/`. The **Check Connect** button sends the entered message to a signed-in ChatGPT tab through the Chrome extension, then shows the real response.
+MyTool runs a local Bridge and opens its UI at `http://127.0.0.1:8765/`.
 
 ## Run
 
@@ -10,8 +10,16 @@ From the `mytool` directory:
 py main.py
 ```
 
-This requires an installed Python 3.10+ runtime and the Windows Python Launcher (`py`).
+In Chrome, load `mytool/extension` via `chrome://extensions` > Developer mode > Load unpacked. Reload the extension after updating it, then reload the ChatGPT tab. Keep MyTool running in the terminal.
 
-In Chrome, open `chrome://extensions`, enable Developer mode, and Load unpacked from `mytool/extension`. Open exactly one signed-in `https://chatgpt.com` tab. Reload that tab after loading or reloading the extension. Leave the ChatGPT composer empty and wait for any previous answer to finish. Enter a message in MyTool and press **Check Connect**.
+## ChatGPT
 
-The Bridge listens only on `127.0.0.1:8765`. The extension receives the job over HTTP, sends it to the existing ChatGPT tab, and returns the result. The UI shows the job status and any error code. Each button press creates a new job.
+The ChatGPT tab in MyTool can create a real ChatGPT project through the website. Once ChatGPT opens the new project page, MyTool saves its name, ID and URL in `config/projects.json`. The project selector reads this file. On a prompt, the extension uses an existing tab in the selected project, redirects a ChatGPT tab to the project, or opens a ChatGPT tab if none exists.
+
+MyTool shows a fixed catalog of OpenAI ChatGPT models and reasoning levels. Choose a model, then a level for each prompt. Before sending, the extension checks whether both choices appear in the signed-in account menu for the selected project. If either is unavailable, the UI shows UNSUPPORTED_MODEL and the prompt is not sent.
+
+ChatGPT project and model controls can vary by account and website updates. If MyTool cannot confirm a newly created project URL, it reports an error and does not save a project record. Check the website before repeating project creation.
+
+## Claude
+
+The Claude tab is a UI placeholder. It does not send requests to claude.ai yet.
