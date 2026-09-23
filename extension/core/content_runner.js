@@ -64,8 +64,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       sendResponse({ error: "PROVIDER_NOT_READY", message: "This tab is already processing a job." });
       return;
     }
-    sendResponse({ accepted: true });
-    void createProject(message.name).catch(error => console.error("[MyTool] Project creation failed:", error));
+    activeJob = "create-project";
+    void createProject(message.name).then(() => {
+      sendResponse({ accepted: true });
+    }).catch(error => {
+      console.error("[MyTool] Project creation failed:", error);
+      sendResponse({
+        error: error?.code || "PROJECT_CREATE_FAILED",
+        message: error?.message || "ChatGPT project creation failed.",
+      });
+    }).finally(() => { activeJob = null; });
+    return true; // Keep the response channel open until UI automation succeeds or fails.
   } else if (message.type === "MYTOOL_EXECUTE") {
     const job = message.job;
     if (!job || typeof job.job_id !== "string" || job.action !== "prompt") {

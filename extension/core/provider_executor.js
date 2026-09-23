@@ -104,7 +104,7 @@ export class ProviderExecutor {
     await chrome.storage.session.set({ [ACTIVE_KEY]: active });
     if (job.action === "create_project") {
       try {
-        const ack = await message(tabId, { type: "MYTOOL_CREATE_PROJECT", name: job.content });
+        const ack = await message(tabId, { type: "MYTOOL_CREATE_PROJECT", name: job.content }, 40000);
         if (ack?.error) throw executionError(ack.error, ack.message);
       } catch (error) {
         if (error.code && error.code !== "CONTENT_SCRIPT_NOT_READY") throw error;
@@ -126,7 +126,7 @@ export class ProviderExecutor {
       throw executionError("EXECUTION_STATE_LOST", "Worker stopped before dispatch was recorded.");
     }
     if (active.action === "create_project") {
-      while (Date.now() - active.startedAt < 30000) {
+      while (Date.now() - active.startedAt < 90000) {
         const tab = await chrome.tabs.get(active.tabId).catch(() => null);
         if (!tab) throw executionError("EXECUTION_STATE_LOST", "Project tab was closed.");
         const project = projectFromUrl(tab.url, active.projectName);
