@@ -16,7 +16,12 @@ async function execute(job, record) {
     if (!(await provider.isReady())) {
       throw executionError("PROVIDER_NOT_READY", "Log in and leave ChatGPT idle before starting.");
     }
-    await provider.selectModel(job.model, job.effort);
+    const selection = await provider.selectModel(job.model, job.effort);
+    if (job.action === "sync_model") {
+      record.result = { job_id: job.job_id, status: "completed",
+        text: (selection.changed ? "Đã đồng bộ: " : "Đã khớp: ") + selection.model + " / " + selection.effort };
+      return;
+    }
     await provider.setPrompt(job.content, job.options);
     await provider.sendPrompt();
     await provider.waitForResponse();
@@ -77,8 +82,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true; // Keep the response channel open until UI automation succeeds or fails.
   } else if (message.type === "MYTOOL_EXECUTE") {
     const job = message.job;
-    if (!job || typeof job.job_id !== "string" || job.action !== "prompt") {
+    if (!job || typeof job.job_id !== "string" || !["prompt", "sync_model"].includes(job.action)) {
       sendResponse({ error: "INVALID_REQUEST", message: "Invalid content-script job." });
+      return;
+    }
+    if (job.action === "sync_model" && (![job.model, job.effort].every(
+      value => typeof value === "string" && value.trim()))) {
+      sendResponse({ error: "INVALID_REQUEST", message: "Choose both model and reasoning level." });
       return;
     }
     const signature = JSON.stringify(job);

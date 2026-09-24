@@ -1,123 +1,189 @@
-/** Match the visible ChatGPT model menu, then verify the account accepted each choice. */
-const visible = node => !!node && node.getClientRects().length > 0;
-const text = node => (node.innerText || node.getAttribute("aria-label") || "").trim().split("\n")[0].trim();
-const normalize = value => value.replace(/\s+/g, " ").trim().toLowerCase();
-const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
-const unavailable = message => Object.assign(new Error(message), { code: "UNSUPPORTED_MODEL" });
-const alias = model => normalize(model.replace(/^GPT[- ]/i, ""));
-const levels = ["Instant", "Medium", "High", "Extra High"];
-const clickable = () => [...document.querySelectorAll('button, [role="menuitem"], [role="menuitemradio"], [role="option"], [role="radio"]')].filter(visible);
-const disabled = node => !!node && (node.disabled || node.getAttribute("aria-disabled") === "true" || !!node.closest('[aria-disabled="true"]'));
+import { chatgptSelectors as S } from "./chatgpt_selectors.js";
 
-async function waitFor(check, timeout = 3000) {
+const normalize = value => (value || "").replace(/\s+/g, " ").trim().toLowerCase();
+const alias = value => normalize(value).replace(/^gpt[- ]?/, "");
+const label = node => (node?.innerText || node?.textContent || "").trim();
+const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
+const fail = (message, code = "UNSUPPORTED_MODEL") => Object.assign(new Error(message), { code });
+const standardLevels = ["Instant", "Medium", "High", "Extra High"];
+const allLevels = [...standardLevels, "Pro Standard", "Pro Extended", "Pro"];
+const visible = node => !!node && node.isConnected && node.getClientRects().length > 0
+  && !node.closest('[hidden], [inert], [aria-hidden="true"], [data-active="false"]')
+  && node.ownerDocument.defaultView.getComputedStyle(node).visibility !== "hidden";
+const disabled = node => !node || node.disabled || !!node.closest(
+  '[aria-disabled="true"], [data-disabled], [data-locked="true"]');
+
+async function waitFor(check, timeout = 2500) {
   const end = Date.now() + timeout;
   do {
-    const found = check();
-    if (found) return found;
-    await pause(100);
+    const value = check();
+    if (value) return value;
+    await pause(50);
   } while (Date.now() < end);
   return null;
 }
 
-function exactChoice(label) {
-  return clickable().find(node => normalize(text(node)) === normalize(label));
-}
-
-function modelButton() {
-  return clickable().find(node => /^(?:GPT[- ]?)?\d+(?:\.\d+)?\s+(?:(?:Sol|Luna|Terra)\s+)?(?:Instant|Medium|High|Extra High)/i.test(text(node))
-    && !!node.closest("form, header, [data-type=unified-composer]")
-    && !node.closest('[role="menu"], [role="listbox"]'))
-    || clickable().find(node => /model/i.test((node.getAttribute("data-testid") || "") + " " + (node.getAttribute("aria-label") || "")));
-}
-
-function effortButton() {
-  return clickable().find(node => /thinking effort/i.test(text(node)));
-}
-
-function modelHeading() {
-  return clickable().find(node => /^(?:GPT[- ]?)?\d+(?:\.\d+)?\s+.*(?:Instant|Medium|High)/i.test(text(node)));
-}
-
-function modelOption(model) {
-  const names = [model, alias(model)];
-  return clickable().find(node => names.some(name => normalize(text(node)) === normalize(name)));
-}
-
-async function chooseModel(model) {
-  let button = modelButton() || effortButton();
-  if (!button) throw unavailable("ChatGPT model picker was not found.");
-  button.click();
-  let option = await waitFor(() => modelOption(model));
-  if (!option) {
-    // Some layouts open an effort popover first; its model heading opens the model list.
-    const heading = modelHeading();
-    if (heading && heading !== button) {
-      heading.click();
-      option = await waitFor(() => modelOption(model));
+class ModelPicker {
+  constructor(doc) { this.doc = doc; this.win = doc.defaultView; this.trigger = null; }
+  find(selector, root = this.doc) { return [...root.querySelectorAll(selector)].find(visible); }
+  menu() { return this.find(S.picker); }
+  options() { return [...(this.menu()?.querySelectorAll(S.modelOption) || [])]; }
+  name(option) { return label(option?.querySelector(S.modelName) || option).split("\n")[0]; }
+  selectedModel() {
+    const checked = this.options().filter(node => node.getAttribute("aria-checked") === "true");
+    return checked.length === 1 ? this.name(checked[0]) : "";
+  }
+  async toggle(open) {
+    if (!!this.menu() === open) return;
+    const button = this.trigger;
+    if (!button || disabled(button)) throw fail("ChatGPT model picker was not found or is disabled.");
+    // Some composer pills respond to click; Radix triggers respond to pointerdown.
+    button.click();
+    if (await waitFor(() => !!this.menu() === open, 400)) return;
+    const args = { bubbles: true, cancelable: true, button: 0, buttons: 1,
+      pointerId: 1, pointerType: "mouse", isPrimary: true };
+    button.dispatchEvent(new this.win.PointerEvent("pointerdown", args));
+    button.dispatchEvent(new this.win.PointerEvent("pointerup", { ...args, buttons: 0 }));
+    if (!await waitFor(() => !!this.menu() === open)) throw fail("ChatGPT model picker did not respond.");
+  }
+  async open() {
+    const composer = this.find(S.composer);
+    const candidates = [...this.doc.querySelectorAll(S.pickerTrigger)].filter(node =>
+      visible(node) && !node.closest('[role="menu"], [role="dialog"]'));
+    const known = node => /model|thinking effort/i.test(
+      (node.getAttribute("aria-label") || "") + " " + (node.dataset.testid || "") + " " + label(node))
+      || allLevels.some(level => normalize(label(node)) === normalize(level));
+    // Search outward from the composer so unrelated menus are never probed.
+    for (let scope = composer?.parentElement; scope && !this.trigger; scope = scope.parentElement) {
+      const local = candidates.filter(node => scope.contains(node));
+      this.trigger = local.find(known) || [...scope.querySelectorAll("button")].find(node =>
+        visible(node) && /^(?:GPT[- ]?)?\d+(?:\.\d+)?(?:\s+(?:Sol|Luna|Terra))?\s+(?:Instant|Medium|High|Extra High)$/i.test(label(node)))
+        || (local.length === 1 && !normalize(local[0].getAttribute("aria-label")) ? local[0] : null);
+    }
+    if (!this.trigger) this.trigger = candidates.find(known);
+    await this.toggle(true);
+  }
+  async advanced() {
+    if (this.find(S.modelView, this.menu())) return;
+    const toggle = this.find(S.modelToggle, this.menu());
+    if (!toggle || disabled(toggle)) throw fail("ChatGPT Select model control was not found.");
+    toggle.click();
+    if (!await waitFor(() => this.menu() && this.find(S.modelView, this.menu()))) {
+      throw fail("ChatGPT model list did not open.");
     }
   }
-  if (!option || disabled(option)) throw unavailable(model + " is not available in this account's model menu.");
-  option.click();
-  await pause(200);
-  button = modelButton() || modelHeading();
-  if (!button || !normalize(text(button)).startsWith(alias(model) + " ")) {
-    throw unavailable("ChatGPT did not switch to " + model + ".");
+  async simple() {
+    if (await waitFor(() => this.menu() && this.find(S.effortView, this.menu()), 500)) return;
+    // Reopening returns to DOM2 without clicking an already-selected model row.
+    await this.toggle(false);
+    await this.toggle(true);
+    if (!await waitFor(() => this.menu() && this.find(S.effortView, this.menu()))) {
+      throw fail("ChatGPT reasoning controls were not found.");
+    }
   }
-}
-
-function effortLabel(model) {
-  const button = modelButton() || modelHeading();
-  const label = button ? normalize(text(button)) : "";
-  if (!label.startsWith(alias(model) + " ")) return "";
-  return levels.find(level => label.includes(" " + normalize(level))) || "";
-}
-
-function slider() {
-  return [...document.querySelectorAll('[role="slider"], input[type="range"]')].find(visible);
-}
-
-function clickSliderAt(node, fraction) {
-  const rect = node.getBoundingClientRect();
-  if (!rect.width) throw unavailable("Thinking effort slider has no clickable area.");
-  const x = rect.left + Math.max(4, Math.min(rect.width - 4, rect.width * fraction));
-  const y = rect.top + rect.height / 2;
-  const args = { bubbles: true, cancelable: true, clientX: x, clientY: y, button: 0 };
-  const Pointer = window.PointerEvent || MouseEvent;
-  node.dispatchEvent(new Pointer("pointerdown", args));
-  node.dispatchEvent(new MouseEvent("mousedown", args));
-  node.dispatchEvent(new Pointer("pointerup", args));
-  node.dispatchEvent(new MouseEvent("mouseup", args));
-  node.dispatchEvent(new MouseEvent("click", args));
-}
-
-async function chooseEffort(model, effort) {
-  if (effortLabel(model) === effort) return;
-  const button = effortButton() || modelButton();
-  if (!button && !slider()) throw unavailable("Thinking effort picker was not found.");
-  if (!slider() && !exactChoice(effort)) button.click();
-  await pause(150);
-  const option = exactChoice(effort);
-  if (option) {
-    if (disabled(option)) throw unavailable(effort + " is locked for this account.");
-    option.click();
-  } else {
-    const track = await waitFor(slider, 1000);
+  effortLabel() {
+    const node = this.menu() && this.find(S.effortLabel, this.menu());
+    const name = label(node);
+    return allLevels.find(level => normalize(level) === normalize(name)) || "";
+  }
+  sliderState() {
+    const container = this.menu() && this.find(S.effortSlider, this.menu());
+    // Radix's semantic thumb can be aria-hidden; read it, but interact with Power/the track.
+    const thumb = container?.querySelector(S.sliderValue);
+    if (!thumb) return null;
+    const number = key => thumb.hasAttribute(key) ? Number(thumb.getAttribute(key)) : NaN;
+    return { container, thumb, min: number("aria-valuemin"), max: number("aria-valuemax"),
+      value: number("aria-valuenow"), ticks: [...container.querySelectorAll(S.sliderTick)] };
+  }
+  readEffort(levels) {
+    const state = this.sliderState();
+    const name = this.effortLabel();
+    if (!state) return name;
+    const { min, max, value } = state;
+    if (min !== 0 || max !== levels.length - 1 || !Number.isInteger(value) || !levels[value]) return "";
+    return !name || name === levels[value] ? levels[value] : "";
+  }
+  async chooseEffort(model, effort) {
+    const levels = / pro$/i.test(model)
+      ? (alias(model) === "5.5 pro" ? ["Pro Standard", "Pro Extended"] : ["Pro"]) : standardLevels;
+    if (!levels.includes(effort)) throw fail(effort + " is not supported for " + model + ".");
+    if (this.readEffort(levels) === effort) return false;
+    const state = this.sliderState();
+    if (!state) throw fail("Cannot verify the reasoning slider for " + model + ".");
     const index = levels.indexOf(effort);
-    if (!track || index < 0) throw unavailable(effort + " is not available for " + model + ".");
-    if (disabled(track)) throw unavailable("Thinking effort slider is disabled.");
-    clickSliderAt(track, index / (levels.length - 1));
-  }
-  if (!await waitFor(() => effortLabel(model) === effort, 1500)) {
-    throw unavailable(effort + " was not selected. It may be locked for this account.");
+    if (state.min !== 0 || state.max !== levels.length - 1 || !Number.isInteger(state.value)
+        || state.value < state.min || state.value > state.max || state.ticks.length !== levels.length) {
+      throw fail("Unrecognized reasoning slider; cannot safely map " + effort + ".");
+    }
+    const tick = state.ticks[index];
+    if (disabled(state.container) || disabled(state.thumb) || disabled(tick)) {
+      throw fail(effort + " is locked for this account.");
+    }
+    // Prefer the advertised keyboard interaction, which also works on Radix sliders.
+    const control = state.container.closest('[aria-keyshortcuts]');
+    if (control) {
+      control.focus();
+      for (let step = 0; step < levels.length; step++) {
+        const current = this.sliderState()?.value;
+        if (!Number.isInteger(current) || current === index) break;
+        const key = current < index ? "ArrowRight" : "ArrowLeft";
+        control.dispatchEvent(new this.win.KeyboardEvent("keydown", { key, code: key, bubbles: true, cancelable: true }));
+        control.dispatchEvent(new this.win.KeyboardEvent("keyup", { key, code: key, bubbles: true }));
+        if (!await waitFor(() => this.sliderState()?.value !== current, 400)) break;
+      }
+    }
+    if (this.readEffort(levels) !== effort) {
+      const target = this.sliderState()?.ticks[index];
+      if (!target || disabled(target)) throw fail(effort + " is locked or unavailable.");
+      const rect = target.getBoundingClientRect();
+      if (!rect.height) throw fail("Reasoning slider point has no clickable area.");
+      const args = { bubbles: true, cancelable: true, button: 0, buttons: 1,
+        pointerId: 1, pointerType: "mouse", isPrimary: true,
+        clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2 };
+      target.dispatchEvent(new this.win.PointerEvent("pointerdown", args));
+      target.dispatchEvent(new this.win.PointerEvent("pointerup", { ...args, buttons: 0 }));
+    }
+    if (!await waitFor(() => this.readEffort(levels) === effort)) {
+      throw fail("ChatGPT did not confirm reasoning level " + effort + ".", "MODEL_MISMATCH");
+    }
+    return true;
   }
 }
 
-export async function selectChatGPTModel(model, effort) {
+/** Check the account's selected row and slider; mutate only when they differ. */
+export async function selectChatGPTModel(model, effort, { document: doc = document } = {}) {
   if (!model && !effort) return;
-  if (!model || !effort) throw unavailable("Choose both a model and a reasoning level.");
-  await chooseModel(model);
-  await chooseEffort(model, effort);
-  const upgrade = [...document.querySelectorAll('[role="dialog"]')].find(node =>
-    visible(node) && /upgrade|choose a plan|get plus|get pro/i.test(node.innerText || ""));
-  if (upgrade) throw unavailable("This account cannot use the selected model and reasoning level.");
+  if (!model || !effort) throw fail("Choose both a model and a reasoning level.");
+  const picker = new ModelPicker(doc);
+  let changed = false, selectionError;
+  try {
+    await picker.open();
+    await picker.advanced();
+    const option = picker.options().find(node => visible(node) && alias(picker.name(node)) === alias(model));
+    if (!option || disabled(option)) throw fail(model + " is not available in this account's model menu.");
+    if (alias(picker.selectedModel()) !== alias(model)) {
+      option.click();
+      if (!await waitFor(() => alias(picker.selectedModel()) === alias(model))) {
+        throw fail("ChatGPT did not switch to " + model + ".", "MODEL_MISMATCH");
+      }
+      changed = true;
+    }
+    await picker.simple();
+    changed = await picker.chooseEffort(model, effort) || changed;
+    if (alias(picker.selectedModel()) !== alias(model)) {
+      throw fail("ChatGPT model changed during reasoning selection.", "MODEL_MISMATCH");
+    }
+    const upgrade = [...doc.querySelectorAll('[role="dialog"]')].find(node =>
+      visible(node) && /upgrade|choose a plan|get plus|get pro/i.test(label(node)));
+    if (upgrade) throw fail("This account cannot use the selected model and reasoning level.");
+    return { model, effort, changed };
+  } catch (error) {
+    selectionError = error;
+    throw error;
+  } finally {
+    if (picker.menu() && picker.trigger) {
+      try { await picker.toggle(false); }
+      catch (error) { if (!selectionError) throw error; }
+    }
+  }
 }

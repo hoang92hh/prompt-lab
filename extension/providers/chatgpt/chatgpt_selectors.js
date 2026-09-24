@@ -1,5 +1,16 @@
 /** All ChatGPT DOM selectors live here. Fail closed if the UI changes. */
 export const chatgptSelectors = Object.freeze({
+  pickerTrigger: 'button[aria-haspopup="menu"], button[data-testid*="model"], button[aria-label*="model"], button[aria-label*="Thinking effort"]',
+  picker: '[data-testid="composer-intelligence-picker-content"], [data-model-selection-view="true"]',
+  modelToggle: '[role="menuitem"][aria-label="Select model"]',
+  modelView: '[data-testid="composer-model-picker-slider-advanced-view"]',
+  effortView: '[data-testid="composer-model-picker-slider-simple-view"]',
+  modelOption: '[role="menuitemradio"]',
+  modelName: '.truncate',
+  effortSlider: '[data-model-reasoning-effort-slider]',
+  sliderValue: '[role="slider"]',
+  sliderTick: '[data-selected][data-locked]',
+  effortLabel: '[data-max-effort]',
   composer: '#prompt-textarea[contenteditable="true"], textarea#prompt-textarea, form[data-type="unified-composer"] [contenteditable="true"], main [contenteditable="true"][role="textbox"]',
   send: 'button[data-testid="send-button"], button#composer-submit-button[aria-label="Send prompt"], button[aria-label="Send prompt"], button[aria-label="Gửi lời nhắc"], button[aria-label="Send message"]',
   stop: 'button[data-testid="stop-button"], button[aria-label="Stop generating"], button[aria-label="Dừng tạo"]',

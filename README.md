@@ -18,6 +18,8 @@ The ChatGPT tab in MyTool can create a real ChatGPT project through the website.
 
 MyTool shows a fixed catalog of OpenAI ChatGPT models and reasoning levels. Choose a model, then a level for each prompt. Before sending, the extension checks whether both choices appear in the signed-in account menu for the selected project. If either is unavailable, the UI shows UNSUPPORTED_MODEL and the prompt is not sent.
 
+Use the model check/sync button below the reasoning selector to compare both choices with ChatGPT and synchronize any differences without sending a question. The notice reports an existing match, successful synchronization or a selection error. Select the target project first if applicable. After updating these files, restart MyTool/Bridge, reload the extension, and reload both MyTool and the ChatGPT tab.
+
 ChatGPT project and model controls can vary by account and website updates. If MyTool cannot confirm a newly created project URL, it reports an error and does not save a project record. Check the website before repeating project creation.
 
 ## Claude

@@ -6,7 +6,7 @@ from typing import Literal, TypedDict
 class RequiredJobFields(TypedDict):
     job_id: str
     provider: str
-    action: Literal["prompt", "create_project"]
+    action: Literal["prompt", "create_project", "sync_model"]
     content: str
     options: dict[str, object]
 
@@ -30,7 +30,7 @@ class ErrorResponse(TypedDict):
 JobResponse = CompletedResponse | ErrorResponse
 RESULT_ERRORS = {
     "INVALID_REQUEST", "UNSUPPORTED_PROVIDER", "UNSUPPORTED_ACTION",
-    "UNSUPPORTED_MODEL", "UNSUPPORTED_OPTION", "PROVIDER_NOT_READY",
+    "UNSUPPORTED_MODEL", "UNSUPPORTED_OPTION", "MODEL_MISMATCH", "PROVIDER_NOT_READY",
     "PROVIDER_ERROR", "INTERNAL_ERROR",
     "CHATGPT_TAB_NOT_FOUND", "CHATGPT_MULTIPLE_TABS", "CONTENT_SCRIPT_NOT_READY",
     "COMPOSER_NOT_FOUND", "COMPOSER_NOT_EMPTY", "COMPOSER_WRITE_FAILED",
@@ -54,8 +54,12 @@ def validate_request(value: object) -> JobRequest:
     fields = {"job_id", "provider", "action", "content", "options"}
     if not isinstance(value, dict) or not fields <= set(value) or set(value) - fields - {"model", "effort", "project_id", "project_url"}:
         fail(400, "INVALID_REQUEST", "Five required fields and optional model are supported.")
-    if any(not _string(value[key]) for key in fields - {"options"}):
+    if any(not _string(value[key]) for key in fields - {"options", "content"}):
         fail(400, "INVALID_REQUEST", "Request string fields must be non-blank strings.")
+    if not isinstance(value["content"], str) or (value["action"] != "sync_model" and not value["content"].strip()):
+        fail(400, "INVALID_REQUEST", "content must be a string, non-blank except for sync_model.")
+    if value["action"] == "sync_model" and (not _string(value.get("model")) or not _string(value.get("effort"))):
+        fail(400, "INVALID_REQUEST", "sync_model requires both model and effort.")
     if value.get("project_id") is not None and not _string(value["project_id"]):
         fail(400, "INVALID_REQUEST", "project_id must be a non-blank string.")
     if value.get("project_url") is not None:
@@ -74,7 +78,7 @@ def validate_request(value: object) -> JobRequest:
         fail(400, "INVALID_REQUEST", "options must be a JSON object.")
     if value["provider"] not in {"chatgpt"}:
         fail(400, "UNSUPPORTED_PROVIDER", "Provider is not registered.")
-    if value["action"] not in {"prompt", "create_project"}:
+    if value["action"] not in {"prompt", "create_project", "sync_model"}:
         fail(400, "UNSUPPORTED_ACTION", "Unsupported action.")
     if value["action"] == "create_project" and any(value.get(key) for key in ("model", "effort", "project_id", "project_url")):
         fail(400, "INVALID_REQUEST", "Project creation only requires a name in content.")

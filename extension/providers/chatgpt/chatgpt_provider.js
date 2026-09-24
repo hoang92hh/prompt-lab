@@ -48,7 +48,7 @@ export class ChatGPTProvider extends BaseProvider {
   }
 
   async selectModel(model, effort) {
-    await selectChatGPTModel(model, effort);
+    return selectChatGPTModel(model, effort, { document: this.doc });
   }
 
   async setPrompt(content, options = {}) {

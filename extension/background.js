@@ -40,7 +40,7 @@ export async function runLoop() {
         // Retry only this saved result, never the provider or prompt submission.
         await sender.send(result);
         await chrome.storage.session.remove([PENDING_KEY, ACTIVE_KEY]);
-        console.info("[JOB]", result.job_id, result.status.toUpperCase(), result.error || "");
+        console.info("[JOB]", result.job_id, result.status.toUpperCase(), result.error || "", result.message || "");
         delay = 5000;
       } catch (error) {
         console.warn("[Bridge]", error.message, `Retry transport in ${delay / 1000}s`);

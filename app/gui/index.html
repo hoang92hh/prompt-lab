@@ -82,7 +82,10 @@ button.secondary:hover:not(:disabled) { background:#eef6fc; }
           <select id="model" form="form" required><option value="">Chọn model</option></select>
           <label for="effort">Mức suy luận</label>
           <select id="effort" form="form" required disabled><option value="">Chọn model trước</option></select>
-          <p class="hint">Danh sách cố định. Quyền dùng model và mức suy luận được kiểm tra trên tài khoản ChatGPT trước khi gửi.</p>
+          <div class="actions"><button id="check-model" class="secondary" type="button" disabled>Kiểm tra / đồng bộ model</button></div>
+          <div id="model-check" class="notice" role="status">Chọn model và mức suy luận để kiểm tra trên ChatGPT.</div>
+          <p class="hint">Nút kiểm tra sẽ đồng bộ tab ChatGPT theo lựa chọn ở đây, không gửi câu hỏi.</p>
+          <p class="hint">MyTool sẽ chọn model và mức suy luận trên tab ChatGPT trước khi gửi. Model không có trong tài khoản sẽ được báo lỗi.</p>
         </section>
         <section id="claude" role="tabpanel" aria-labelledby="tab-claude" hidden>
           <label for="claude-project-name">Tạo project Claude</label>
@@ -160,12 +163,14 @@ async function loadProjects(selectId = "") {
   if (projects.some(project => project.id === current)) select.value = current;
 }
 
-async function runJob(payload, onSuccess = null) {
+async function runJob(payload, onSuccess = null, onFailure = null) {
   if (active) return;
   active = true;
   $("#send").disabled = true;
   $("#create-project").disabled = true;
-  $("#answer").textContent = "";
+  $("#check-model").disabled = true;
+  for (const id of ["model", "effort", "project", "check-project"]) $("#" + id).disabled = true;
+  if (payload.action !== "sync_model") $("#answer").textContent = "";
   const id = "mytool-" + crypto.randomUUID();
   $("#job").textContent = "Job ID: " + id;
   try {
@@ -189,21 +194,28 @@ async function runJob(payload, onSuccess = null) {
         return;
       }
       if (record.status === "error") {
-        $("#answer").textContent = record.result.error === "UNSUPPORTED_MODEL"
-          ? "Model " + ($("#model").value || "") + " / " + ($("#effort").value || "") +
+        const message = record.result.error === "UNSUPPORTED_MODEL"
+          ? "Model " + (payload.model || "") + " / " + (payload.effort || "") +
             " không khả dụng trong tài khoản ChatGPT đang đăng nhập. " + record.result.message
           : record.result.error + ": " + record.result.message;
+        if (onFailure) onFailure(message);
+        else $("#answer").textContent = message;
         return;
       }
       await pause(1000);
     }
     $("#status").textContent = "Hết thời gian chờ; kiểm tra job trước khi gửi lại.";
+    if (onFailure) onFailure($("#status").textContent);
   } catch (error) {
     $("#status").textContent = "Lỗi: " + error.message;
+    if (onFailure) onFailure($("#status").textContent);
   } finally {
     active = false;
     $("#send").disabled = false;
     $("#create-project").disabled = false;
+    for (const id of ["model", "project", "check-project"]) $("#" + id).disabled = false;
+    $("#effort").disabled = !$("#model").value;
+    updateModelCheck();
   }
 }
 
@@ -227,6 +239,24 @@ $("#model").addEventListener("change", () => {
   $("#effort").replaceChildren(new Option("Chọn mức suy luận", ""));
   for (const level of levels) $("#effort").add(new Option(level, level));
   $("#effort").disabled = levels.length === 0;
+});
+
+function updateModelCheck() {
+  $("#check-model").disabled = active || !$("#model").value || !$("#effort").value;
+}
+for (const id of ["model", "effort", "project"]) {
+  $("#" + id).addEventListener("change", () => {
+    updateModelCheck();
+    $("#model-check").textContent = "Lựa chọn đã thay đổi. Nhấn kiểm tra để đồng bộ với ChatGPT.";
+  });
+}
+$("#check-model").addEventListener("click", () => {
+  if (active || !$("#model").value || !$("#effort").value) return;
+  $("#model-check").textContent = "Đang kiểm tra và đồng bộ trên ChatGPT...";
+  void runJob({action:"sync_model", content:"", model:$("#model").value,
+    effort:$("#effort").value, ...selectedProjectFields()},
+    result => { $("#model-check").textContent = result.text; },
+    message => { $("#model-check").textContent = message; });
 });
 
 $("#check-project").addEventListener("click", async () => {
