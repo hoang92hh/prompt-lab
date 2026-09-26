@@ -11,6 +11,8 @@ from .project_store import ProjectStore
 from .protocol import ProtocolError, fail
 
 MAX_BODY_BYTES = 1024 * 1024
+GUI_ROOT = (Path(__file__).parent.parent / "app" / "gui").resolve()
+ASSET_CONTENT_TYPES = {".css": "text/css; charset=utf-8", ".js": "text/javascript; charset=utf-8"}
 
 def _unique_object(pairs):
     value = {}
@@ -105,15 +107,37 @@ class BridgeHandler(BaseHTTPRequestHandler):
             if self.command != "GET":
                 fail(405, "METHOD_NOT_ALLOWED", "Use GET for projects.")
             self._send(200, {"projects": self.server.projects.list()})
+        elif path.startswith("/assets/"):
+            if self.command != "GET":
+                fail(405, "METHOD_NOT_ALLOWED", "Use GET for application assets.")
+            raw_asset = path[len("/assets/"):]
+            if not raw_asset or "\\" in raw_asset:
+                fail(404, "NOT_FOUND", "Unknown application asset.")
+            asset_path = (GUI_ROOT / raw_asset).resolve()
+            try:
+                asset_path.relative_to(GUI_ROOT)
+            except ValueError:
+                fail(404, "NOT_FOUND", "Unknown application asset.")
+            content_type = ASSET_CONTENT_TYPES.get(asset_path.suffix)
+            if content_type is None or not asset_path.is_file():
+                fail(404, "NOT_FOUND", "Unknown application asset.")
+            body = asset_path.read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.end_headers()
+            self.wfile.write(body)
         elif path == "/":
             if self.command != "GET":
                 fail(405, "METHOD_NOT_ALLOWED", "Use GET for the application page.")
-            body = (Path(__file__).parent.parent / "app" / "gui" / "index.html").read_bytes()
+            body = (GUI_ROOT / "index.html").read_bytes()
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
-            self.send_header("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; form-action 'none'")
+            self.send_header("Content-Security-Policy", "default-src 'none'; style-src 'self'; script-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'")
             self.end_headers()
             self.wfile.write(body)
         elif path == "/api/jobs":
