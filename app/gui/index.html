@@ -40,6 +40,10 @@ button.secondary:hover:not(:disabled) { background:#eef6fc; }
 .hint { margin:9px 0 0; font-size:.82rem; line-height:1.45; color:#61717e; }
 .notice { margin-top:12px; padding:10px 11px; border-radius:8px; background:#f2f6f9; color:#52616b; font-size:.84rem; overflow-wrap:anywhere; }
 .connection-warning { flex:none; margin:0; border:1px solid #e4bd65; background:#fff6dc; color:#72520d; }
+.connection-warning-inner { display:flex; align-items:flex-start; gap:10px; }
+.connection-warning-message { flex:1; min-width:0; }
+.connection-warning-close { flex:none; width:24px; height:24px; padding:0; border:0; border-radius:5px; background:transparent; color:inherit; font-size:1.2rem; line-height:1; }
+.connection-warning-close:hover { background:#72520d18; }
 .status-card { margin-top:18px; padding:13px; border:1px solid #e1e8ee; border-radius:10px; background:#f8fafc; }
 .conversation-form { margin-top:18px; padding-top:18px; border-top:1px solid #e1e8ee; }
 .status-card strong { display:block; font-size:.83rem; color:#52616b; margin-bottom:5px; }
@@ -62,7 +66,12 @@ button.secondary:hover:not(:disabled) { background:#eef6fc; }
 <body>
 <div class="app">
   <header class="topbar"><h1>MyTool</h1><small>AI workspace</small></header>
-  <div id="connection-warning" class="notice connection-warning" role="status" hidden></div>
+  <div id="connection-warning" class="notice connection-warning" role="status" hidden>
+    <div class="connection-warning-inner">
+      <span id="connection-warning-message" class="connection-warning-message"></span>
+      <button id="connection-warning-close" class="connection-warning-close" type="button" aria-label="Đóng thông báo">&times;</button>
+    </div>
+  </div>
   <main class="workspace">
     <section class="panel" aria-labelledby="settings-title">
       <div class="panel-head"><h2 id="settings-title">1. Thiết lập AI</h2></div>
@@ -146,6 +155,7 @@ let projects = [];
 const mytoolSessionId = crypto.randomUUID();
 let lastExtensionSessionId = null;
 let connectionPollRunning = false;
+let connectionWarningDismissed = false;
 
 for (const provider of ["chatgpt","claude"]) {
   $("#tab-" + provider).addEventListener("click", () => {
@@ -167,14 +177,20 @@ async function api(path, options) {
 }
 
 function showConnectionWarning(message) {
-  $("#connection-warning").textContent = message;
+  if (connectionWarningDismissed) return;
+  $("#connection-warning-message").textContent = message;
   $("#connection-warning").hidden = false;
 }
 
 function clearConnectionWarning() {
   $("#connection-warning").hidden = true;
-  $("#connection-warning").textContent = "";
+  $("#connection-warning-message").textContent = "";
 }
+
+$("#connection-warning-close").addEventListener("click", () => {
+  connectionWarningDismissed = true;
+  clearConnectionWarning();
+});
 
 function readConnectionState(state) {
   if (state.mytool_session_id && state.mytool_session_id !== mytoolSessionId) {
