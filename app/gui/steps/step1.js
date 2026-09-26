@@ -25,8 +25,15 @@
       <div class="status-card"><strong>Trạng thái</strong><p id="claude-status" role="status">Claude chưa kết nối</p></div>
     </section>`,
   outputHtml: `
-    <div id="chatgpt-output"><div id="answer" aria-live="polite"></div></div>
-    <div id="claude-output" hidden><p class="answer-placeholder">Câu trả lời của Claude sẽ xuất hiện ở đây khi kết nối được triển khai.</p></div>`,
+    <div class="step-output-content">
+      <div id="chatgpt-output"><div id="answer" aria-live="polite"></div></div>
+      <div id="claude-output" hidden><p class="answer-placeholder">Câu trả lời của Claude sẽ xuất hiện ở đây khi kết nối được triển khai.</p></div>
+    </div>
+    <div class="output-save-row">
+      <label class="visually-hidden" for="step1-output-name">Tên file kết quả</label>
+      <input id="step1-output-name" type="text" placeholder="Để trống: step1_currenttime">
+      <button id="step1-save-output" class="secondary" type="button">Lưu kết quả</button>
+    </div>`,
   mount({input, pollConnection, runJob, selectedProjectFields}) {
     input.querySelector("#form").addEventListener("submit", event => {
       event.preventDefault();
