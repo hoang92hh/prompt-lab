@@ -1,8 +1,10 @@
 /** All ChatGPT DOM selectors live here. Fail closed if the UI changes. */
 export const chatgptSelectors = Object.freeze({
-  pickerTrigger: 'button[aria-haspopup="menu"], button[data-testid*="model"], button[aria-label*="model"], button[aria-label*="Thinking effort"]',
+  effortTrigger: 'button[aria-label="Select ChatGPT model" i][aria-haspopup="menu"], button.__composer-pill[aria-haspopup="menu"][data-tone="neutral"][aria-expanded][data-state]',
+  pickerTrigger: 'button[aria-haspopup="menu"], button[data-testid*="model" i], button[aria-label*="model" i], button[aria-label*="Thinking effort" i], [role="button"][aria-haspopup="menu"], [role="button"][data-testid*="model" i], [role="button"][aria-label*="model" i], [role="button"][aria-label*="Thinking effort" i], [aria-expanded][aria-label*="Thinking effort" i], [aria-expanded][data-testid*="model" i]',
   picker: '[data-testid="composer-intelligence-picker-content"], [data-model-selection-view="true"]',
-  modelToggle: '[role="menuitem"][aria-label="Select model"]',
+  pickerPopup: '[role="menu"], [role="dialog"], [data-radix-menu-content], [data-testid="composer-intelligence-picker-content"], [data-model-selection-view="true"]',
+  modelToggle: '[role="menuitem"][aria-label="Select model"][data-interactive="true"]',
   modelView: '[data-testid="composer-model-picker-slider-advanced-view"]',
   effortView: '[data-testid="composer-model-picker-slider-simple-view"]',
   modelOption: '[role="menuitemradio"]',

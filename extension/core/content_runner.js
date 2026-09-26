@@ -7,6 +7,39 @@ const jobs = new Map();
 let activeJob = null;
 let projectChatOpening = false;
 const factory = new ProviderFactory();
+const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+async function waitForModelStateReady(provider, timeoutMs = 20000) {
+  const deadline = Date.now() + timeoutMs;
+  let composerError = null;
+  do {
+    try {
+      if (await provider.isReady()) return true;
+    } catch (error) {
+      if (error?.code !== "COMPOSER_NOT_FOUND") throw error;
+      composerError = error;
+    }
+    await pause(250);
+  } while (Date.now() < deadline);
+  if (composerError) throw composerError;
+  return false;
+}
+
+async function logCurrentModelState() {
+  try {
+    const provider = factory.create("chatgpt", {
+      log: step => console.info("[MyTool][MODEL_STATE_STEP]", step),
+    });
+    if (!(await waitForModelStateReady(provider))) {
+      console.warn("[MyTool][MODEL_STATE_ERROR] ChatGPT is not ready.");
+      return;
+    }
+    const state = await provider.getModelState();
+    console.info("[MyTool][MODEL_STATE]", state);
+  } catch (error) {
+    console.warn("[MyTool][MODEL_STATE_ERROR]", error?.code || "PROVIDER_ERROR", error?.message || String(error));
+  }
+}
 
 async function execute(job, record) {
   try {
@@ -110,3 +143,5 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     void execute(job, record);
   }
 });
+
+void logCurrentModelState();

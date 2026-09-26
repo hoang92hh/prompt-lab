@@ -1,6 +1,6 @@
 import { BaseProvider } from "../base_provider.js";
 import { chatgptSelectors as S } from "./chatgpt_selectors.js";
-import { selectChatGPTModel } from "./chatgpt_models.js";
+import { readChatGPTModelState, selectChatGPTModel } from "./chatgpt_models.js";
 
 const error = (code, message) => Object.assign(new Error(message), { code });
 const normalize = (text) => text.replace(/\r\n?/g, "\n").trim();
@@ -47,6 +47,10 @@ export class ChatGPTProvider extends BaseProvider {
 
   async selectModel(model, effort) {
     return selectChatGPTModel(model, effort, { document: this.doc });
+  }
+
+  async getModelState() {
+    return readChatGPTModelState({ document: this.doc, log: this.log });
   }
 
   async setPrompt(content, options = {}) {

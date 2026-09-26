@@ -108,3 +108,25 @@ Hướng chẩn đoán:
 - Khi marker thay đổi, giao diện chỉ cảnh báo trạng thái model có thể không còn đồng bộ. Cảnh báo không chặn việc gửi prompt; prompt vẫn dùng model hiện tại trên web.
 - Đồng bộ model thành công sẽ xóa cảnh báo.
 - Không tạo hoặc sửa file trong `tests/` cho thay đổi này. Kiểm tra thủ công: F5 MyTool có cảnh báo; reload extension có cảnh báo; không reload thì không cảnh báo; prompt gửi được khi chưa chọn model; nút đồng bộ vẫn chạy riêng.
+
+## Đọc trạng thái model trước khi so sánh (2026-09-27)
+
+- `chatgpt_models.js` cung cấp `readChatGPTModelState()` để chỉ đọc model và mức suy luận hiện tại.
+- Chuỗi đọc dùng chung là DOM1 -> DOM2 đọc effort -> DOM3 đọc model `aria-checked=true` -> click lại model checked để về DOM2 -> xác nhận effort -> đóng menu.
+- Luồng đọc không bấm model option, không điều chỉnh slider, không ghi hoặc gửi prompt.
+- Popup được ưu tiên nhận diện qua `aria-controls`, sau đó `aria-labelledby`, selector đã biết và cuối cùng là một ứng viên cấu trúc duy nhất.
+- `ChatGPTProvider.getModelState()` là cổng dùng chung cho logic kiểm tra lúc tải lại và nút kiểm tra/đồng bộ ở các bước sau.
+- Khi content script được nạp, kết quả được ghi ở Console dưới nhãn `[MyTool][MODEL_STATE]`; lỗi dùng `[MyTool][MODEL_STATE_ERROR]`.
+- Content script chờ tối đa 20 giây và thử lại mỗi 250 ms khi composer chưa render; chỉ bắt đầu DOM1 sau khi provider sẵn sàng.
+- Khi DOM1 không nhận diện được trigger, Console ghi tối đa 12 button gần composer với metadata giới hạn: tag, text nút rút gọn, aria-label, aria-haspopup, aria-expanded, data-testid và disabled. Không ghi composer, hội thoại hoặc toàn bộ HTML.
+- Lỗi DOM1 phân biệt `DOM1_TRIGGER_NOT_FOUND` và `DOM1_TRIGGER_DISABLED`; các ứng viên chưa xác định không được click.
+- DOM1 ưu tiên `button[aria-label="Select ChatGPT model"][aria-haspopup="menu"]`; biến thể không có aria-label dùng `button.__composer-pill[aria-haspopup="menu"][data-tone="neutral"][aria-expanded][data-state]`. Không dùng ID Radix vì ID thay đổi theo phiên.
+- Sau khi composer sẵn sàng, bộ đọc vẫn chờ riêng DOM1 tối đa 20 giây và kiểm tra lại mỗi 100 ms; không kết luận thiếu trigger khi pill còn đang render.
+- Sau click DOM1 vẫn phải xác nhận DOM2 xuất hiện. DOM2 mở `Select model`, DOM3 đọc model có `aria-checked=true`, sau đó quay lại DOM2 đọc mức suy luận và đóng panel.
+- Control `Select model` của DOM2 là `[role=menuitem][aria-label="Select model"]`. Kích hoạt theo thứ tự click, pointerdown/pointerup, rồi Enter; dừng ngay khi advanced view DOM3 trở thành visible để tránh toggle hai lần.
+- Từ DOM3 quay về DOM2 bằng cách kích hoạt đúng một dòng `[role=menuitemradio][aria-checked=true]`; thử click, pointerdown/pointerup rồi Enter và dừng ngay khi simple view visible. Không đóng/mở lại popup và không chọn dòng model khác.
+- Luồng đọc và luồng đổi model dùng chung các bước chuyển DOM2/DOM3; không đọc model từ advanced view ẩn để thay thế thao tác UI.
+- Sau mỗi thay đổi UI (mở DOM2, mở DOM3, quay lại DOM2, đóng menu) có khoảng quan sát 1 giây. DOM2 -> DOM3 và DOM3 -> DOM2 dùng pointer/mouse đầy đủ có tọa độ, sau đó fallback phím điều hướng nếu giao diện chưa chuyển.
+- Việc không tìm thấy `[data-max-effort]` ở DOM2 không được chặn mở DOM3; text của pill DOM1 (ví dụ `Instant`) là fallback effort và được xác minh lại sau khi quay về DOM2.
+- Xác nhận DOM3 bằng ít nhất một dòng model radio đang visible, không chỉ dựa vào wrapper advanced view. Xác nhận quay về DOM2 bằng simple view, `Select model` hoặc effort slider đang visible. Effort trên pill DOM1 được lưu trước khi mở menu vì text trigger có thể đổi trong lúc popup mở.
+- Lượt thay đổi này chưa chuyển trạng thái về MyTool, chưa so sánh default và chưa thay đổi model.
