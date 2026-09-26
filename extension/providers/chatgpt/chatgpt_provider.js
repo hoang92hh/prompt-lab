@@ -4,16 +4,14 @@ import { selectChatGPTModel } from "./chatgpt_models.js";
 
 const error = (code, message) => Object.assign(new Error(message), { code });
 const normalize = (text) => text.replace(/\r\n?/g, "\n").trim();
-const comparable = (text) => normalize(text).replace(/\s+/g, " ");
 
 export class ChatGPTProvider extends BaseProvider {
-  constructor({ document: doc = document, timeoutMs = 180000, stableMs = 1200,
+  constructor({ document: doc = document, timeoutMs = 180000,
     log = () => {} } = {}) {
     super();
     this.doc = doc;
     this.win = doc.defaultView;
     this.timeoutMs = timeoutMs;
-    this.stableMs = stableMs;
     this.log = log;
     this.sent = false;
     this.finished = false;
@@ -87,31 +85,32 @@ export class ChatGPTProvider extends BaseProvider {
   }
 
   messageKey(node) {
-    return node.getAttribute("data-message-id")
+    return node.getAttribute("data-chatgpt-search-message-ids")
+      || node.getAttribute("data-chatgpt-search-unit-key")
+      || node.getAttribute("data-content-search-unit-key")
+      || node.getAttribute("data-message-id")
       || node.closest(S.turn)?.getAttribute("data-testid") || node;
   }
 
-  newUser() {
-    // Index AND identity checks exclude old messages even after React re-renders.
-    return [...this.doc.querySelectorAll(S.user)].slice(this.beforeUsers.length).find(
-      (node) => !this.beforeUserKeys.has(this.messageKey(node))
-        && comparable(node.innerText) === comparable(this.prompt),
-    ) || null;
+  assistantTurns() {
+    return [...this.doc.querySelectorAll(S.assistantTurn)].filter(node => this.visible(node));
   }
 
   currentAssistant() {
-    const user = this.newUser();
-    if (!user) return null;
-    const messages = [...this.doc.querySelectorAll(S.messages)];
-    const after = messages.slice(messages.indexOf(user) + 1);
-    const candidates = [];
-    for (const node of after) {
-      if (node.matches(S.user)) break; // Never take a subsequent user's response.
-      if (!this.beforeAssistantKeys.has(this.messageKey(node)) && this.visible(node)) {
-        candidates.push(node);
-      }
-    }
-    return candidates.at(-1) || null;
+    if (this.responseTurn?.isConnected && this.visible(this.responseTurn)) return this.responseTurn;
+    this.responseTurn = this.assistantTurns().filter(
+      node => !this.beforeAssistantKeys.has(this.messageKey(node)),
+    ).at(-1) || null;
+    return this.responseTurn;
+  }
+
+  completionControls(turn) {
+    const controls = [...this.doc.querySelectorAll(S.turnActions)].filter(node =>
+      this.visible(node) && !this.beforeActionControls.has(node));
+    return controls.find(node => {
+      if (turn.contains(node)) return true;
+      return Boolean(turn.compareDocumentPosition(node) & this.win.Node.DOCUMENT_POSITION_FOLLOWING);
+    }) || null;
   }
 
   responseText(node) {
@@ -133,11 +132,10 @@ export class ChatGPTProvider extends BaseProvider {
   observe(check, timeoutMs, timeoutError) {
     return new Promise((resolve, reject) => {
       let done = false;
-      let observer, tick, deadline;
+      let observer, deadline;
       const cleanup = () => {
         done = true;
         observer?.disconnect();
-        this.win.clearInterval(tick);
         this.win.clearTimeout(deadline);
         if (this.abortWait === abort) this.abortWait = null;
       };
@@ -154,7 +152,6 @@ export class ChatGPTProvider extends BaseProvider {
       observer.observe(this.doc.documentElement, {
         subtree: true, childList: true, characterData: true, attributes: true,
       });
-      tick = this.win.setInterval(evaluate, 150);
       deadline = this.win.setTimeout(() => {
         if (done) return;
         cleanup();
@@ -177,16 +174,19 @@ export class ChatGPTProvider extends BaseProvider {
     if (!composer || normalize(this.composerText(composer)) !== normalize(this.prompt) || this.find(S.stop)) {
       throw error("PROMPT_SEND_FAILED", "Composer changed or generation is already active.");
     }
-    this.beforeUsers = [...this.doc.querySelectorAll(S.user)];
-    this.beforeUserKeys = new Set(this.beforeUsers.map((node) => this.messageKey(node)));
-    this.beforeAssistantKeys = new Set([...this.doc.querySelectorAll(S.assistant)].map(
+    this.beforeAssistantKeys = new Set(this.assistantTurns().map(
       (node) => this.messageKey(node),
     ));
+    this.beforeActionControls = new Set(this.doc.querySelectorAll(S.turnActions));
+    this.responseTurn = null;
     this.startedAt = Date.now();
     this.sent = true; // Set BEFORE the side effect; never fall back to Enter or click twice.
     button.click();
-    await this.observe(() => this.newUser(), 10000, () => error(
-      "PROMPT_SEND_FAILED", "Send was attempted but the new user turn was not confirmed. Do not retry automatically.",
+    await this.observe(() => {
+      const current = this.find(S.composer);
+      return current && !normalize(this.composerText(current)) ? true : null;
+    }, 10000, () => error(
+      "PROMPT_SEND_FAILED", "Send was attempted but the composer did not clear. Do not retry automatically.",
     ));
     this.log("PROMPT SENT");
   }
@@ -194,32 +194,18 @@ export class ChatGPTProvider extends BaseProvider {
   async waitForResponse() {
     if (!this.sent) throw error("PROMPT_SEND_FAILED", "Prompt has not been sent.");
     this.log("WAITING RESPONSE");
-    let previousText = "";
-    let previousKey = null;
-    let stableSince = Date.now();
     let sawAssistant = false;
-    let sawGeneration = false;
     const text = await this.observe(() => {
-      if (this.find(S.stop)) sawGeneration = true;
       const assistant = this.currentAssistant();
       if (!assistant) return null;
       sawAssistant = true;
+      const controls = this.completionControls(assistant);
+      if (!controls || !this.find(S.copyAction, controls)) return null;
       const value = this.responseText(assistant);
-      const key = this.messageKey(assistant);
-      const turn = assistant.closest(S.turn) || assistant;
-      const generating = !!this.find(S.stop) || !!this.find(S.streaming, turn);
-      if (value !== previousText || key !== previousKey || generating) {
-        previousText = value;
-        previousKey = key;
-        stableSince = Date.now();
-      }
-      // Require an end-of-turn action, no generation UI, and stable new content.
-      const completeAction = this.find(S.completionAction, turn);
-      if (value && completeAction && !generating && this.editable(this.find(S.composer))
-          && Date.now() - stableSince >= this.stableMs) return value;
+      if (value && this.editable(this.find(S.composer))) return value;
       return null;
     }, this.timeoutMs - (Date.now() - this.startedAt), () => error(
-      sawAssistant || sawGeneration ? "RESPONSE_TIMEOUT" : "ASSISTANT_RESPONSE_NOT_FOUND",
+      sawAssistant ? "RESPONSE_TIMEOUT" : "ASSISTANT_RESPONSE_NOT_FOUND",
       sawAssistant ? "ChatGPT did not show a completed response before the deadline."
         : "No assistant message for this prompt was found before the deadline.",
     ));

@@ -16,8 +16,8 @@ async function execute(job, record) {
     if (!(await provider.isReady())) {
       throw executionError("PROVIDER_NOT_READY", "Log in and leave ChatGPT idle before starting.");
     }
-    const selection = await provider.selectModel(job.model, job.effort);
     if (job.action === "sync_model") {
+      const selection = await provider.selectModel(job.model, job.effort);
       record.result = { job_id: job.job_id, status: "completed",
         text: (selection.changed ? "Đã đồng bộ: " : "Đã khớp: ") + selection.model + " / " + selection.effort };
       return;

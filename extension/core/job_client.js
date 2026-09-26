@@ -14,9 +14,13 @@ export class JobClient {
     this.fetchImpl = fetchImpl;
   }
 
-  async receiveJob() {
+  async receiveJob(extensionSessionId) {
+    const headers = {};
+    if (typeof extensionSessionId === "string" && extensionSessionId.trim()) {
+      headers["X-MyTool-Extension-Session"] = extensionSessionId;
+    }
     const response = await this.fetchImpl(`${this.baseUrl}/api/jobs/next`, {
-      signal: AbortSignal.timeout(25000), cache: "no-store",
+      signal: AbortSignal.timeout(25000), cache: "no-store", headers,
     });
     if (response.status === 204) return null;
     if (!response.ok) throw new HttpError(response.status);

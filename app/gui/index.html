@@ -39,6 +39,7 @@ button.primary:hover:not(:disabled) { background:#105788; }
 button.secondary:hover:not(:disabled) { background:#eef6fc; }
 .hint { margin:9px 0 0; font-size:.82rem; line-height:1.45; color:#61717e; }
 .notice { margin-top:12px; padding:10px 11px; border-radius:8px; background:#f2f6f9; color:#52616b; font-size:.84rem; overflow-wrap:anywhere; }
+.connection-warning { flex:none; margin:0; border:1px solid #e4bd65; background:#fff6dc; color:#72520d; }
 .status-card { margin-top:18px; padding:13px; border:1px solid #e1e8ee; border-radius:10px; background:#f8fafc; }
 .status-card strong { display:block; font-size:.83rem; color:#52616b; margin-bottom:5px; }
 #status,#claude-status { margin:0; font-weight:650; overflow-wrap:anywhere; }
@@ -60,6 +61,7 @@ button.secondary:hover:not(:disabled) { background:#eef6fc; }
 <body>
 <div class="app">
   <header class="topbar"><h1>MyTool</h1><small>AI workspace</small></header>
+  <div id="connection-warning" class="notice connection-warning" role="status" hidden></div>
   <main class="workspace">
     <section class="panel" aria-labelledby="settings-title">
       <div class="panel-head"><h2 id="settings-title">1. Thiết lập AI</h2></div>
@@ -79,13 +81,13 @@ button.secondary:hover:not(:disabled) { background:#eef6fc; }
           <div class="actions"><button id="check-project" class="secondary" type="button">Kiểm tra project</button></div>
           <div id="project-check" class="notice" role="status">Chọn project để kiểm tra thông tin đã lưu.</div>
           <label for="model">Model</label>
-          <select id="model" form="form" required><option value="">Chọn model</option></select>
+          <select id="model"><option value="">Chọn model</option></select>
           <label for="effort">Mức suy luận</label>
-          <select id="effort" form="form" required disabled><option value="">Chọn model trước</option></select>
+          <select id="effort" disabled><option value="">Chọn model trước</option></select>
           <div class="actions"><button id="check-model" class="secondary" type="button" disabled>Kiểm tra / đồng bộ model</button></div>
           <div id="model-check" class="notice" role="status">Chọn model và mức suy luận để kiểm tra trên ChatGPT.</div>
           <p class="hint">Nút kiểm tra sẽ đồng bộ tab ChatGPT theo lựa chọn ở đây, không gửi câu hỏi.</p>
-          <p class="hint">MyTool sẽ chọn model và mức suy luận trên tab ChatGPT trước khi gửi. Model không có trong tài khoản sẽ được báo lỗi.</p>
+          <p class="hint">Khi gửi câu hỏi, MyTool luôn dùng model và mức suy luận hiện tại trên tab ChatGPT. Hai lựa chọn trên chỉ dùng cho nút kiểm tra / đồng bộ.</p>
         </section>
         <section id="claude" role="tabpanel" aria-labelledby="tab-claude" hidden>
           <label for="claude-project-name">Tạo project Claude</label>
@@ -134,6 +136,9 @@ const $ = selector => document.querySelector(selector);
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 let active = false;
 let projects = [];
+const mytoolSessionId = crypto.randomUUID();
+let lastExtensionSessionId = null;
+let connectionPollRunning = false;
 
 for (const provider of ["chatgpt","claude"]) {
   $("#tab-" + provider).addEventListener("click", () => {
@@ -152,6 +157,51 @@ async function api(path, options) {
   const data = await response.json();
   if (!response.ok) throw new Error(data.error + ": " + data.message);
   return data;
+}
+
+function showConnectionWarning(message) {
+  $("#connection-warning").textContent = message;
+  $("#connection-warning").hidden = false;
+}
+
+function clearConnectionWarning() {
+  $("#connection-warning").hidden = true;
+  $("#connection-warning").textContent = "";
+}
+
+function readConnectionState(state) {
+  if (state.mytool_session_id && state.mytool_session_id !== mytoolSessionId) {
+    showConnectionWarning("Một phiên MyTool khác vừa được tải lại. Trạng thái model có thể không còn đồng bộ; hãy dùng “Kiểm tra / đồng bộ model” nếu cần.");
+  }
+  if (state.extension_session_id) {
+    if (lastExtensionSessionId && lastExtensionSessionId !== state.extension_session_id) {
+      showConnectionWarning("Extension vừa được tải lại. Trạng thái model có thể không còn đồng bộ; hãy dùng “Kiểm tra / đồng bộ model” nếu cần.");
+    }
+    lastExtensionSessionId = state.extension_session_id;
+  }
+}
+
+async function registerMytoolSession() {
+  const state = await api("/api/connection/mytool", {
+    method:"POST", headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({session_id:mytoolSessionId})
+  });
+  if (state.mytool_changed) {
+    showConnectionWarning("MyTool vừa được tải lại. Trạng thái model có thể không còn đồng bộ; hãy dùng “Kiểm tra / đồng bộ model” nếu cần.");
+  }
+  readConnectionState(state);
+}
+
+async function pollConnection() {
+  if (connectionPollRunning) return;
+  connectionPollRunning = true;
+  try {
+    readConnectionState(await api("/api/connection"));
+  } catch (error) {
+    showConnectionWarning("Không đọc được trạng thái extension: " + error.message + ". Việc gửi prompt vẫn không bị chặn.");
+  } finally {
+    connectionPollRunning = false;
+  }
 }
 
 async function loadProjects(selectId = "") {
@@ -255,7 +305,7 @@ $("#check-model").addEventListener("click", () => {
   $("#model-check").textContent = "Đang kiểm tra và đồng bộ trên ChatGPT...";
   void runJob({action:"sync_model", content:"", model:$("#model").value,
     effort:$("#effort").value, ...selectedProjectFields()},
-    result => { $("#model-check").textContent = result.text; },
+    result => { $("#model-check").textContent = result.text; clearConnectionWarning(); },
     message => { $("#model-check").textContent = message; });
 });
 
@@ -282,17 +332,20 @@ $("#create-project").addEventListener("click", () => {
 });
 $("#form").addEventListener("submit", event => {
   event.preventDefault();
-  const model = $("#model").value;
-  const effort = $("#effort").value;
-  if (!model || !effort || $("#effort").disabled) {
-    $("#status").textContent = "Hãy chọn model và mức suy luận trước khi gửi.";
-    return;
-  }
+  void pollConnection();
   const payload = {action:"prompt", content:$("#message").value.trim(),
-    model, effort, ...selectedProjectFields()};
+    ...selectedProjectFields()};
   void runJob(payload);
 });
 loadProjects().catch(error => { $("#status").textContent = "Không đọc được project: " + error.message; });
+registerMytoolSession().catch(error => {
+  showConnectionWarning("Không đăng ký được phiên MyTool: " + error.message + ". Việc gửi prompt vẫn không bị chặn.");
+});
+setInterval(() => { void pollConnection(); }, 7000);
+window.addEventListener("focus", () => { void pollConnection(); });
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) void pollConnection();
+});
 </script>
 </body>
 </html>

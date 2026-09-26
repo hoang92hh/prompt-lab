@@ -5,6 +5,7 @@ import logging
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import unquote, urlsplit
+from .connection_state import ConnectionState
 from .job_manager import JobManager
 from .project_store import ProjectStore
 from .protocol import ProtocolError, fail
@@ -28,6 +29,7 @@ class BridgeServer(ThreadingHTTPServer):
     def __init__(self, port: int = 8765, poll_timeout: float = 20):
         self.manager = JobManager()
         self.projects = ProjectStore()
+        self.connection_state = ConnectionState()
         self.poll_timeout = poll_timeout
         super().__init__(("127.0.0.1", port), BridgeHandler)
 
@@ -85,7 +87,21 @@ class BridgeHandler(BaseHTTPRequestHandler):
             fail(400, "INVALID_REQUEST", "Query parameters are not supported.")
         path = url.path
         manager = self.server.manager
-        if path == "/api/projects":
+        if path == "/api/connection":
+            if self.command != "GET":
+                fail(405, "METHOD_NOT_ALLOWED", "Use GET for connection state.")
+            self._send(200, self.server.connection_state.snapshot())
+        elif path == "/api/connection/mytool":
+            if self.command != "POST":
+                fail(405, "METHOD_NOT_ALLOWED", "Use POST to register the MyTool session.")
+            request = self._body()
+            if (not isinstance(request, dict) or set(request) != {"session_id"}
+                    or not isinstance(request["session_id"], str)
+                    or not request["session_id"].strip()
+                    or len(request["session_id"]) > 128):
+                fail(400, "INVALID_REQUEST", "A non-blank session_id is required.")
+            self._send(200, self.server.connection_state.register_mytool(request["session_id"]))
+        elif path == "/api/projects":
             if self.command != "GET":
                 fail(405, "METHOD_NOT_ALLOWED", "Use GET for projects.")
             self._send(200, {"projects": self.server.projects.list()})
@@ -112,6 +128,11 @@ class BridgeHandler(BaseHTTPRequestHandler):
         elif path == "/api/jobs/next":
             if self.command != "GET":
                 fail(405, "METHOD_NOT_ALLOWED", "Use GET for claiming jobs.")
+            extension_session_id = self.headers.get("X-MyTool-Extension-Session")
+            if extension_session_id is not None:
+                if not extension_session_id.strip() or len(extension_session_id) > 128:
+                    fail(400, "INVALID_REQUEST", "Invalid extension session marker.")
+                self.server.connection_state.register_extension(extension_session_id)
             job = manager.next_job(self.server.poll_timeout)
             self._send(204 if job is None else 200, job)
         elif path.startswith("/api/jobs/"):

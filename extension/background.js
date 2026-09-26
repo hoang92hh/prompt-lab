@@ -5,11 +5,28 @@ import { failure } from "./core/execution_errors.js";
 
 const WAKE_ALARM = "mytool-transport";
 const PENDING_KEY = "pendingResult";
+const EXTENSION_SESSION_KEY = "extensionSessionId";
 const client = new JobClient();
 const sender = new ResponseSender();
 const executor = new ProviderExecutor();
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 let running = false;
+let extensionSessionPromise = null;
+
+function extensionSessionId() {
+  if (!extensionSessionPromise) {
+    extensionSessionPromise = (async () => {
+      const stored = await chrome.storage.session.get(EXTENSION_SESSION_KEY);
+      if (typeof stored[EXTENSION_SESSION_KEY] === "string" && stored[EXTENSION_SESSION_KEY]) {
+        return stored[EXTENSION_SESSION_KEY];
+      }
+      const sessionId = crypto.randomUUID();
+      await chrome.storage.session.set({ [EXTENSION_SESSION_KEY]: sessionId });
+      return sessionId;
+    })();
+  }
+  return extensionSessionPromise;
+}
 
 export async function runLoop() {
   if (running) return;
@@ -26,7 +43,7 @@ export async function runLoop() {
             try { result = await executor.resume(active); }
             catch (error) { result = failure(active.job_id, error); }
           } else {
-            const job = await client.receiveJob();
+            const job = await client.receiveJob(await extensionSessionId());
             if (!job) { delay = 5000; continue; }
             console.info("[JOB]", job.job_id, "JOB RECEIVED (processing)");
             await chrome.storage.session.set({
