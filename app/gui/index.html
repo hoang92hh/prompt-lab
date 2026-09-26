@@ -41,6 +41,7 @@ button.secondary:hover:not(:disabled) { background:#eef6fc; }
 .notice { margin-top:12px; padding:10px 11px; border-radius:8px; background:#f2f6f9; color:#52616b; font-size:.84rem; overflow-wrap:anywhere; }
 .connection-warning { flex:none; margin:0; border:1px solid #e4bd65; background:#fff6dc; color:#72520d; }
 .status-card { margin-top:18px; padding:13px; border:1px solid #e1e8ee; border-radius:10px; background:#f8fafc; }
+.conversation-form { margin-top:18px; padding-top:18px; border-top:1px solid #e1e8ee; }
 .status-card strong { display:block; font-size:.83rem; color:#52616b; margin-bottom:5px; }
 #status,#claude-status { margin:0; font-weight:650; overflow-wrap:anywhere; }
 #job { margin:7px 0 0; color:#647482; font-size:.75rem; overflow-wrap:anywhere; }
@@ -108,10 +109,16 @@ button.secondary:hover:not(:disabled) { background:#eef6fc; }
       <div class="panel-body">
         <section id="chatgpt-compose">
           <form id="form">
-            <label for="message">Nội dung câu hỏi</label>
-            <textarea id="message" required placeholder="Nhập câu hỏi cho ChatGPT..."></textarea>
-            <div class="actions"><button id="send" class="primary" type="submit">Check Connect / Gửi câu hỏi</button></div>
+            <label for="message">Ô 1 — Cuộc trò chuyện mới</label>
+            <textarea id="message" required placeholder="Nhập câu hỏi để tạo cuộc trò chuyện mới..."></textarea>
+            <div class="actions"><button id="send" class="primary" type="submit">Gửi vào cuộc trò chuyện mới</button></div>
           </form>
+          <form id="continue-form" class="conversation-form">
+            <label for="continue-message">Ô 2 — Tiếp tục cuộc trò chuyện</label>
+            <textarea id="continue-message" required placeholder="Nhập câu hỏi tiếp theo..."></textarea>
+            <div class="actions"><button id="continue-send" class="primary" type="submit">Gửi tiếp cuộc trò chuyện</button></div>
+          </form>
+          <div id="conversation-status" class="notice" role="status">Ô 2 tiếp tục nếu tab ChatGPT hiện tại thuộc project đã chọn; nếu không, ChatGPT sẽ mở project trước khi gửi.</div>
           <div class="status-card"><strong>Trạng thái</strong><p id="status" role="status">Sẵn sàng</p><p id="job"></p></div>
         </section>
         <section id="claude-compose" hidden>
@@ -217,6 +224,7 @@ async function runJob(payload, onSuccess = null, onFailure = null) {
   if (active) return;
   active = true;
   $("#send").disabled = true;
+  $("#continue-send").disabled = true;
   $("#create-project").disabled = true;
   $("#check-model").disabled = true;
   for (const id of ["model", "effort", "project", "check-project"]) $("#" + id).disabled = true;
@@ -262,6 +270,7 @@ async function runJob(payload, onSuccess = null, onFailure = null) {
   } finally {
     active = false;
     $("#send").disabled = false;
+    $("#continue-send").disabled = false;
     $("#create-project").disabled = false;
     for (const id of ["model", "project", "check-project"]) $("#" + id).disabled = false;
     $("#effort").disabled = !$("#model").value;
@@ -324,6 +333,7 @@ $("#check-project").addEventListener("click", async () => {
 });
 $("#project").addEventListener("change", () => {
   $("#project-check").textContent = "Nhấn Kiểm tra project để đọc thông tin đã lưu.";
+  $("#conversation-status").textContent = "Ô 2 sẽ kiểm tra tab ChatGPT hiện tại với project vừa chọn trước khi gửi.";
 });
 $("#create-project").addEventListener("click", () => {
   const name = $("#project-name").value.trim();
@@ -334,7 +344,16 @@ $("#form").addEventListener("submit", event => {
   event.preventDefault();
   void pollConnection();
   const payload = {action:"prompt", content:$("#message").value.trim(),
-    ...selectedProjectFields()};
+    conversation_mode:"new", ...selectedProjectFields()};
+  $("#conversation-status").textContent = "Ô 1 đang mở project và tạo cuộc trò chuyện mới...";
+  void runJob(payload);
+});
+$("#continue-form").addEventListener("submit", event => {
+  event.preventDefault();
+  void pollConnection();
+  const payload = {action:"prompt", content:$("#continue-message").value.trim(),
+    conversation_mode:"continue", ...selectedProjectFields()};
+  $("#conversation-status").textContent = "Ô 2 đang kiểm tra URL hiện tại trước khi gửi...";
   void runJob(payload);
 });
 loadProjects().catch(error => { $("#status").textContent = "Không đọc được project: " + error.message; });

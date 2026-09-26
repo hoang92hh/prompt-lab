@@ -12,6 +12,8 @@ MyTool communicates with the local Bridge over HTTP at `127.0.0.1:8765`. The Chr
 
 Prompt and sync jobs can include `project_id` and `project_url`. MyTool verifies the saved project ID and URL before enqueueing and the extension selects that project's tab using the normal execution path.
 
+Prompt jobs can set `conversation_mode` to `new` or `continue`. New mode opens the selected project root before sending. Continue mode keeps the current ChatGPT page when its URL belongs to the selected project; otherwise it opens the project root before sending. No conversation URL is stored or transferred through the Bridge.
+
 Model selection is performed only for `sync_model`. It reads the checked account model row and reasoning slider. Already-matching choices are left alone. Missing or locked choices report `UNSUPPORTED_MODEL`; changes not confirmed by the website report `MODEL_MISMATCH`.
 
 Each job moves through `queued`, `processing`, and either `completed` or `error`. Jobs are kept in Bridge memory until the process ends. Claimed jobs are not automatically requeued.

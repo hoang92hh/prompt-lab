@@ -15,6 +15,7 @@ class JobRequest(RequiredJobFields, total=False):
     effort: str | None
     project_id: str | None
     project_url: str | None
+    conversation_mode: Literal["new", "continue"] | None
 
 class CompletedResponse(TypedDict):
     job_id: str
@@ -52,8 +53,9 @@ def _string(value: object) -> bool:
 
 def validate_request(value: object) -> JobRequest:
     fields = {"job_id", "provider", "action", "content", "options"}
-    if not isinstance(value, dict) or not fields <= set(value) or set(value) - fields - {"model", "effort", "project_id", "project_url"}:
-        fail(400, "INVALID_REQUEST", "Five required fields and optional model are supported.")
+    optional = {"model", "effort", "project_id", "project_url", "conversation_mode"}
+    if not isinstance(value, dict) or not fields <= set(value) or set(value) - fields - optional:
+        fail(400, "INVALID_REQUEST", "Unsupported request fields.")
     if any(not _string(value[key]) for key in fields - {"options", "content"}):
         fail(400, "INVALID_REQUEST", "Request string fields must be non-blank strings.")
     if not isinstance(value["content"], str) or (value["action"] != "sync_model" and not value["content"].strip()):
@@ -66,6 +68,11 @@ def validate_request(value: object) -> JobRequest:
         url = urlsplit(value["project_url"]) if isinstance(value["project_url"], str) else None
         if not url or url.scheme != "https" or url.netloc != "chatgpt.com" or not re.fullmatch(r"/g/g-p-[^/]+/project/?", url.path):
             fail(400, "INVALID_REQUEST", "project_url must be a ChatGPT project URL.")
+    conversation_mode = value.get("conversation_mode")
+    if conversation_mode is not None and conversation_mode not in {"new", "continue"}:
+        fail(400, "INVALID_REQUEST", "conversation_mode must be new or continue.")
+    if value["action"] != "prompt" and conversation_mode is not None:
+        fail(400, "INVALID_REQUEST", "Conversation routing is supported only for prompt jobs.")
     if value.get("effort") is not None and not _string(value["effort"]):
         fail(400, "INVALID_REQUEST", "effort must be null or a non-blank string.")
     if value.get("effort") and not value.get("model"):
@@ -80,7 +87,8 @@ def validate_request(value: object) -> JobRequest:
         fail(400, "UNSUPPORTED_PROVIDER", "Provider is not registered.")
     if value["action"] not in {"prompt", "create_project", "sync_model"}:
         fail(400, "UNSUPPORTED_ACTION", "Unsupported action.")
-    if value["action"] == "create_project" and any(value.get(key) for key in ("model", "effort", "project_id", "project_url")):
+    if value["action"] == "create_project" and any(value.get(key) for key in (
+            "model", "effort", "project_id", "project_url", "conversation_mode")):
         fail(400, "INVALID_REQUEST", "Project creation only requires a name in content.")
     if value["options"]:
         fail(400, "UNSUPPORTED_OPTION", "No options are currently supported.")

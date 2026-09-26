@@ -18,4 +18,6 @@ Current ChatGPT assistant turns expose `data-chatgpt-search-message-ids` and a u
 
 The saved turn actions are Copy, Rate response, Share, Add to project sources, Read aloud, Regenerate response, and More actions. Only Copy is used by prompt execution; the remaining selectors are retained for future explicit features. Waiting is event-driven through `MutationObserver` with a deadline timer. There is no fixed 150 ms DOM polling loop.
 
+Prompt routing has two explicit modes. New mode opens the selected project root before dispatch. Continue mode checks the current ChatGPT tab URL: it dispatches on the current page when that URL belongs to the selected project, and otherwise opens the project root first. Project conversation URLs may include a slug after the saved project ID. Response completion does not depend on reading or returning the conversation URL.
+
 The MyTool page and extension each create a per-load session marker. The extension marker is stored in `chrome.storage.session` so service-worker suspension keeps the same value while an extension reload creates a new one. The Bridge records the marker on the normal long-poll request and exposes a separate read-only connection snapshot to the page. Marker changes only display a warning; they do not gate prompt execution.

@@ -32,12 +32,11 @@ async function ready(tabId, expectedRoot = null) {
   throw executionError("CONTENT_SCRIPT_NOT_READY", "Reload the ChatGPT tab after loading the extension.");
 }
 
-async function projectComposerReady(tabId, projectUrl) {
-  const root = projectUrl.replace(/\/project\/?$/, "");
+async function projectComposerReady(tabId, job) {
   for (let i = 0; i < 40; i++) {
     try {
       const state = await message(tabId, { type: "MYTOOL_PROJECT_READY" });
-      if (state?.ready && state.url?.startsWith(root + "/")) return;
+      if (state?.ready && projectMatchesUrl(state.url, job)) return;
     } catch {}
     await sleep(500);
   }
@@ -53,22 +52,57 @@ function projectFromUrl(url, name) {
   } catch { return null; }
 }
 
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^$\{\}()|[\]\\]/g, "\\$&");
+}
+
+function projectMatchesUrl(url, job) {
+  try {
+    const parsed = new URL(url);
+    if (parsed.origin !== "https://chatgpt.com") return false;
+    if (!job.project_id || !job.project_url) {
+      return parsed.pathname === "/" || /^\/c\/[^/]+\/?$/.test(parsed.pathname);
+    }
+    const projectPath = new URL(job.project_url).pathname.replace(/\/$/, "");
+    const conversationPattern = new RegExp(
+      "^/g/" + escapeRegExp(job.project_id) + "(?:-[^/]+)?/c/[^/]+/?$",
+    );
+    return parsed.pathname.replace(/\/$/, "") === projectPath ||
+      conversationPattern.test(parsed.pathname);
+  } catch { return false; }
+}
+
+async function navigate(tabId, url) {
+  const tab = await chrome.tabs.get(tabId);
+  if (tab.url !== url) await chrome.tabs.update(tabId, { url, active: true });
+}
+
+async function openPromptTarget(tabId, job) {
+  const tab = await chrome.tabs.get(tabId);
+  const keepCurrent = job.conversation_mode === "continue" && projectMatchesUrl(tab.url, job);
+  if (!keepCurrent) {
+    const target = job.project_url || "https://chatgpt.com/";
+    await navigate(tabId, target);
+    await ready(tabId, job.project_url
+      ? job.project_url.replace(/\/project\/?$/, "") : "https://chatgpt.com");
+  } else {
+    await ready(tabId);
+  }
+  if (job.project_url) await projectComposerReady(tabId, job);
+}
+
 async function chooseTab(job) {
   const tabs = await chrome.tabs.query({ url: chatgptTarget.matches });
-  if (job.project_url) {
-    const root = job.project_url.replace(/\/project\/?$/, "");
-    const inProject = tabs.filter(tab => tab.url?.startsWith(root + "/"));
-    if (inProject.length > 1) throw executionError("CHATGPT_MULTIPLE_TABS", "Keep one tab for this project.");
-    if (inProject.length === 1) return inProject[0].id;
-  }
   if (tabs.length > 1) {
     const active = tabs.filter(tab => tab.active);
     if (active.length !== 1) throw executionError("CHATGPT_MULTIPLE_TABS", "Select one ChatGPT tab or close extra tabs.");
     return active[0].id;
   }
   if (tabs.length === 1) return tabs[0].id;
-  if (job.project_url || job.action === "create_project") {
-    const tab = await chrome.tabs.create({ url: job.project_url || "https://chatgpt.com/projects", active: true });
+  if (job.project_url || job.action === "create_project" || job.action === "prompt") {
+    const url = job.action === "create_project"
+      ? "https://chatgpt.com/projects" : job.project_url || "https://chatgpt.com/";
+    const tab = await chrome.tabs.create({ url, active: true });
     return tab.id;
   }
   throw executionError(chatgptTarget.missingTabCode, "Open one logged-in ChatGPT tab first.");
@@ -84,18 +118,19 @@ export class ProviderExecutor {
       if (!tab.url?.startsWith("https://chatgpt.com/projects")) {
         await chrome.tabs.update(tabId, { url: "https://chatgpt.com/projects", active: true });
       }
-    }
-    if (job.project_url) {
+      await ready(tabId, "https://chatgpt.com/projects");
+    } else if (job.action === "prompt") {
+      await openPromptTarget(tabId, job);
+    } else if (job.project_url) {
       const tab = await chrome.tabs.get(tabId);
       const root = job.project_url.replace(/\/project\/?$/, "");
       if (!tab.url?.startsWith(root + "/")) {
         await chrome.tabs.update(tabId, { url: job.project_url, active: true });
       }
-    }
-    await ready(tabId, job.action === "create_project" ? "https://chatgpt.com/projects" :
-      job.project_url ? job.project_url.replace(/\/project\/?$/, "") : null);
-    if (job.action !== "create_project" && job.project_url) {
-      await projectComposerReady(tabId, job.project_url);
+      await ready(tabId, root);
+      await projectComposerReady(tabId, job);
+    } else {
+      await ready(tabId);
     }
     const initialTab = job.action === "create_project" ? await chrome.tabs.get(tabId) : null;
     const active = { job_id: job.job_id, tabId, startedAt: Date.now(),

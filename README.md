@@ -22,6 +22,8 @@ Use the model check/sync button below the reasoning selector to compare both cho
 
 MyTool and the extension keep separate in-memory session markers. Reloading the MyTool page or extension shows an advisory warning because the displayed model choices may no longer match the website. This warning never blocks prompt jobs. A successful explicit model sync clears it.
 
+The question panel has two prompt forms. The first opens the selected project before sending, which starts a new conversation. The second keeps the current ChatGPT page when its URL belongs to the selected project; otherwise it opens that project before sending.
+
 ChatGPT project and model controls can vary by account and website updates. If MyTool cannot confirm a newly created project URL, it reports an error and does not save a project record. Check the website before repeating project creation.
 
 ## Claude
