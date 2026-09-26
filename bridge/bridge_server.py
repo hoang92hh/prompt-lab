@@ -7,6 +7,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import unquote, urlsplit
 from .connection_state import ConnectionState
 from .job_manager import JobManager
+from .output_store import OutputStore
 from .project_store import ProjectStore
 from .protocol import ProtocolError, fail
 
@@ -30,6 +31,7 @@ class BridgeServer(ThreadingHTTPServer):
 
     def __init__(self, port: int = 8765, poll_timeout: float = 20):
         self.manager = JobManager()
+        self.outputs = OutputStore()
         self.projects = ProjectStore()
         self.connection_state = ConnectionState()
         self.poll_timeout = poll_timeout
@@ -107,6 +109,13 @@ class BridgeHandler(BaseHTTPRequestHandler):
             if self.command != "GET":
                 fail(405, "METHOD_NOT_ALLOWED", "Use GET for projects.")
             self._send(200, {"projects": self.server.projects.list()})
+        elif path.startswith("/api/outputs/"):
+            if self.command != "POST":
+                fail(405, "METHOD_NOT_ALLOWED", "Use POST to save an output.")
+            step = path[len("/api/outputs/"):]
+            if not step or "/" in step:
+                fail(404, "NOT_FOUND", "Unknown output step.")
+            self._send(201, self.server.outputs.save(step, self._body()))
         elif path.startswith("/assets/"):
             if self.command != "GET":
                 fail(405, "METHOD_NOT_ALLOWED", "Use GET for application assets.")

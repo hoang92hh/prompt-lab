@@ -258,6 +258,7 @@ for (const step of stepCatalog) {
     step.mount({
       input: $("#" + step.id + "-input"),
       output: $("#" + step.id + "-output"),
+      api,
       pollConnection,
       runJob,
       selectedProjectFields

@@ -51,6 +51,7 @@ button.secondary:hover:not(:disabled) { background:#eef6fc; }
 #step1-output { display:flex; flex-direction:column; }
 .step-output-content { flex:1; min-height:0; overflow-y:auto; overscroll-behavior:contain; scrollbar-gutter:stable; }
 .output-save-row { flex:none; display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px; align-items:center; margin-top:16px; padding-top:16px; border-top:1px solid #e1e8ee; }
+.output-save-status { flex:none; min-height:1.2em; margin:7px 0 0; color:#52616b; font-size:.78rem; overflow-wrap:anywhere; }
 .visually-hidden { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
 .status-card { margin-top:18px; padding:13px; border:1px solid #e1e8ee; border-radius:10px; background:#f8fafc; }
 .conversation-form { margin-top:18px; padding-top:18px; border-top:1px solid #e1e8ee; }

@@ -33,8 +33,9 @@
       <label class="visually-hidden" for="step1-output-name">Tên file kết quả</label>
       <input id="step1-output-name" type="text" placeholder="Để trống: step1_currenttime">
       <button id="step1-save-output" class="secondary" type="button">Lưu kết quả</button>
-    </div>`,
-  mount({input, pollConnection, runJob, selectedProjectFields}) {
+    </div>
+    <p id="step1-save-status" class="output-save-status" role="status" aria-live="polite"></p>`,
+  mount({input, output, api, pollConnection, runJob, selectedProjectFields}) {
     input.querySelector("#form").addEventListener("submit", event => {
       event.preventDefault();
       void pollConnection();
@@ -50,6 +51,50 @@
         conversation_mode:"continue", ...selectedProjectFields()};
       input.querySelector("#conversation-status").textContent = "Ô 2 đang kiểm tra URL hiện tại trước khi gửi...";
       void runJob(payload);
+    });
+    const saveButton = output.querySelector("#step1-save-output");
+    const saveStatus = output.querySelector("#step1-save-status");
+    const answer = output.querySelector("#answer");
+    let saving = false;
+    let resultSaved = false;
+    const updateSaveButton = () => {
+      saveButton.disabled = saving || resultSaved || !answer.textContent.trim();
+    };
+    new MutationObserver(() => {
+      resultSaved = false;
+      saveStatus.textContent = "";
+      updateSaveButton();
+    }).observe(answer, {childList:true, subtree:true, characterData:true});
+    updateSaveButton();
+    saveButton.addEventListener("click", async () => {
+      const content = answer.textContent.trim();
+      if (!content) {
+        saveStatus.textContent = "Chưa có câu trả lời để lưu.";
+        updateSaveButton();
+        return;
+      }
+      saving = true;
+      updateSaveButton();
+      saveStatus.textContent = "Đang lưu...";
+      try {
+        const result = await api("/api/outputs/step1", {
+          method:"POST", headers:{"Content-Type":"application/json"},
+          body:JSON.stringify({
+            name:output.querySelector("#step1-output-name").value.trim(),
+            sections:[{title:"Câu trả lời", content}]
+          })
+        });
+        resultSaved = answer.textContent.trim() === content;
+        saveStatus.textContent = resultSaved
+          ? "Đã lưu: " + result.filename
+          : "Đã lưu kết quả trước; kết quả mới chưa được lưu.";
+      } catch (error) {
+        resultSaved = false;
+        saveStatus.textContent = "Không lưu được: " + error.message;
+      } finally {
+        saving = false;
+        updateSaveButton();
+      }
     });
   }
 };
