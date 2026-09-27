@@ -223,17 +223,37 @@ class ModelPicker {
     return effortFromText(label(node), levels);
   }
   triggerEffort(levels = allLevels) {
+    const current = effortFromText(label(this.trigger), levels);
+    if (current) return current;
     if (this.initialEffort && levels.includes(this.initialEffort)) return this.initialEffort;
-    return effortFromText(label(this.trigger), levels);
+    return "";
   }
   sliderState() {
-    const container = this.menu() && this.find(S.effortSlider, this.menu());
+    const menu = this.menu();
+    if (!menu) return null;
+    let container = this.find(S.effortSlider, menu);
     // Radix's semantic thumb can be aria-hidden; read it, but interact with Power/the track.
-    const thumb = container?.querySelector(S.sliderValue);
+    let thumb = container?.querySelector(S.sliderValue);
+    if (!thumb) {
+      const candidates = [...menu.querySelectorAll(
+        S.sliderValue + ', input[type="range"], [aria-valuemin][aria-valuemax][aria-valuenow]',
+      )].filter(node =>
+        node.isConnected && !node.closest('[hidden], [inert], [data-active="false"]'));
+      const unique = [...new Set(candidates)];
+      if (unique.length !== 1) return null;
+      thumb = unique[0];
+      container = thumb.closest('[aria-keyshortcuts], [data-radix-slider-root], [role="group"]')
+        || thumb.parentElement;
+    }
     if (!thumb) return null;
-    const number = key => thumb.hasAttribute(key) ? Number(thumb.getAttribute(key)) : NaN;
+    const property = { "aria-valuemin": "min", "aria-valuemax": "max", "aria-valuenow": "value" };
+    const number = key => thumb.hasAttribute(key)
+      ? Number(thumb.getAttribute(key))
+      : property[key] in thumb ? Number(thumb[property[key]]) : NaN;
+    let ticks = [...(container?.querySelectorAll(S.sliderTick) || [])];
+    if (!ticks.length) ticks = [...menu.querySelectorAll(S.sliderTick)];
     return { container, thumb, min: number("aria-valuemin"), max: number("aria-valuemax"),
-      value: number("aria-valuenow"), ticks: [...container.querySelectorAll(S.sliderTick)] };
+      value: number("aria-valuenow"), ticks };
   }
   readEffort(levels) {
     const state = this.sliderState();
@@ -246,20 +266,40 @@ class ModelPicker {
   async chooseEffort(model, effort) {
     const levels = levelsForModel(model);
     if (!levels.includes(effort)) throw fail(effort + " is not supported for " + model + ".");
-    if (this.readEffort(levels) === effort) return false;
-    const state = this.sliderState();
-    if (!state) throw fail("Cannot verify the reasoning slider for " + model + ".");
-    const index = levels.indexOf(effort);
-    if (state.min !== 0 || state.max !== levels.length - 1 || !Number.isInteger(state.value)
-        || state.value < state.min || state.value > state.max || state.ticks.length !== levels.length) {
-      throw fail("Unrecognized reasoning slider; cannot safely map " + effort + ".");
+    const currentEffort = () => this.readEffort(levels) || this.triggerEffort(levels);
+    if (currentEffort() === effort) return false;
+    let lastSliderState = null;
+    const state = await waitFor(() => {
+      const candidate = this.sliderState();
+      if (!candidate) return null;
+      lastSliderState = candidate;
+      return candidate.min === 0 && candidate.max === levels.length - 1
+        && Number.isInteger(candidate.value)
+        && candidate.value >= candidate.min && candidate.value <= candidate.max
+        ? candidate : null;
+    }, 5000, 100);
+    if (!state) {
+      const summary = lastSliderState
+        ? " min=" + lastSliderState.min + " max=" + lastSliderState.max
+          + " value=" + lastSliderState.value + " ticks=" + lastSliderState.ticks.length
+        : " no candidate";
+      throw fail(
+        "Reasoning slider did not stabilize for " + model + ";" + summary + ".",
+        "MODEL_PICKER_FAILED",
+      );
     }
-    const tick = state.ticks[index];
-    if (disabled(state.container) || disabled(state.thumb) || disabled(tick)) {
+    if (currentEffort() === effort) return false;
+    const index = levels.indexOf(effort);
+    if (disabled(state.container) || disabled(state.thumb)) {
+      throw fail(effort + " is locked for this account.");
+    }
+    const knownTargetTick = state.ticks.length === levels.length ? state.ticks[index] : null;
+    if (knownTargetTick && disabled(knownTargetTick)) {
       throw fail(effort + " is locked for this account.");
     }
     // Prefer the advertised keyboard interaction, which also works on Radix sliders.
-    const control = state.container.closest('[aria-keyshortcuts]');
+    const control = state.container.closest('[aria-keyshortcuts]')
+      || state.thumb.closest('[tabindex]') || state.thumb;
     if (control) {
       control.focus();
       for (let step = 0; step < levels.length; step++) {
@@ -271,9 +311,15 @@ class ModelPicker {
         if (!await waitFor(() => this.sliderState()?.value !== current, 400)) break;
       }
     }
-    if (this.readEffort(levels) !== effort) {
+    if (!await waitFor(() => currentEffort() === effort, 1000, 100)) {
       const target = this.sliderState()?.ticks[index];
-      if (!target || disabled(target)) throw fail(effort + " is locked or unavailable.");
+      if (!target) {
+        throw fail(
+          "Reasoning keyboard control did not change to " + effort + " and no slider tick was available.",
+          "MODEL_PICKER_FAILED",
+        );
+      }
+      if (disabled(target)) throw fail(effort + " is locked or unavailable.");
       const rect = target.getBoundingClientRect();
       if (!rect.height) throw fail("Reasoning slider point has no clickable area.");
       const args = { bubbles: true, cancelable: true, button: 0, buttons: 1,
@@ -282,7 +328,7 @@ class ModelPicker {
       target.dispatchEvent(new this.win.PointerEvent("pointerdown", args));
       target.dispatchEvent(new this.win.PointerEvent("pointerup", { ...args, buttons: 0 }));
     }
-    if (!await waitFor(() => this.readEffort(levels) === effort)) {
+    if (!await waitFor(() => currentEffort() === effort)) {
       throw fail("ChatGPT did not confirm reasoning level " + effort + ".", "MODEL_MISMATCH");
     }
     return true;
@@ -349,28 +395,62 @@ export async function readChatGPTModelState({ document: doc = document, log = ()
 }
 
 /** Check the account's selected row and slider; mutate only when they differ. */
-export async function selectChatGPTModel(model, effort, { document: doc = document } = {}) {
+export async function selectChatGPTModel(model, effort, {
+  document: doc = document, log = () => {},
+} = {}) {
   if (!model && !effort) return;
   if (!model || !effort) throw fail("Choose both a model and a reasoning level.");
-  const picker = new ModelPicker(doc);
+  const picker = new ModelPicker(doc, log);
   let changed = false, selectionError;
   try {
+    log("DOM1 -> DOM2");
     await picker.open();
+    log("DOM2 OPEN");
+    await pause(1000);
+
     await picker.advanced();
+    log("DOM3 OPEN");
+    await pause(1000);
+
+    const currentModel = picker.selectedModel();
+    if (!currentModel) {
+      throw fail("DOM3: ChatGPT did not expose exactly one checked model.", "MODEL_PICKER_FAILED");
+    }
+    log("DOM3 CURRENT MODEL: " + currentModel);
     const option = picker.options().find(node => visible(node) && alias(picker.name(node)) === alias(model));
     if (!option || disabled(option)) throw fail(model + " is not available in this account's model menu.");
-    if (alias(picker.selectedModel()) !== alias(model)) {
+    if (alias(currentModel) !== alias(model)) {
       option.click();
       if (!await waitFor(() => alias(picker.selectedModel()) === alias(model))) {
         throw fail("ChatGPT did not switch to " + model + ".", "MODEL_MISMATCH");
       }
       changed = true;
+      log("DOM3 MODEL CHANGED: " + model);
+      await pause(1000);
+    } else {
+      log("DOM3 MODEL ALREADY MATCHED: " + model);
     }
+
     await picker.simple();
-    changed = await picker.chooseEffort(model, effort) || changed;
+    log("DOM2 RETURNED");
+    await pause(1000);
+
+    const effortChanged = await picker.chooseEffort(model, effort);
+    changed = effortChanged || changed;
+    log(effortChanged ? "DOM2 EFFORT CHANGED: " + effort : "DOM2 EFFORT ALREADY MATCHED: " + effort);
+    if (effortChanged) await pause(1000);
+
     if (alias(picker.selectedModel()) !== alias(model)) {
       throw fail("ChatGPT model changed during reasoning selection.", "MODEL_MISMATCH");
     }
+    const modelLevels = levelsForModel(model);
+    const verifiedEffort = picker.readEffort(modelLevels)
+      || picker.effortLabel(modelLevels) || picker.triggerEffort(modelLevels);
+    if (verifiedEffort !== effort) {
+      throw fail("ChatGPT did not confirm reasoning level " + effort + ".", "MODEL_MISMATCH");
+    }
+    log("MODEL AND EFFORT VERIFIED: " + model + " / " + effort);
+
     const upgrade = [...doc.querySelectorAll('[role="dialog"]')].find(node =>
       visible(node) && /upgrade|choose a plan|get plus|get pro/i.test(label(node)));
     if (upgrade) throw fail("This account cannot use the selected model and reasoning level.");
@@ -380,7 +460,11 @@ export async function selectChatGPTModel(model, effort, { document: doc = docume
     throw error;
   } finally {
     if (picker.menu() && picker.trigger) {
-      try { await picker.toggle(false); }
+      try {
+        await pause(1000);
+        await picker.toggle(false);
+        log("MENU CLOSED");
+      }
       catch (error) { if (!selectionError) throw error; }
     }
   }

@@ -318,10 +318,20 @@ applyStepModelDefaults(stepCatalog.find(step => step.id === activeStepId));
 
 $("#check-model").addEventListener("click", () => {
   if (active || !$("#model").value || !$("#effort").value) return;
+  if (latestModelState
+      && latestModelState.model === $("#model").value
+      && latestModelState.effort === $("#effort").value) {
+    renderModelComparison();
+    return;
+  }
   $("#model-check").textContent = "Đang kiểm tra và đồng bộ trên ChatGPT...";
   void runJob({action:"sync_model", content:"", model:$("#model").value,
     effort:$("#effort").value, ...selectedProjectFields()},
-    result => { $("#model-check").textContent = result.text; clearConnectionWarning(); },
+    result => {
+      $("#model-check").textContent = result.text;
+      clearConnectionWarning("model-mismatch");
+      void pollConnection();
+    },
     message => { $("#model-check").textContent = message; });
 });
 

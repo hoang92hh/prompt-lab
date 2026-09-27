@@ -106,6 +106,44 @@ Chạy từ thư mục mytool:
 - After DOM3 identifies the model, DOM2 verification restricts trigger and label parsing to the reasoning levels supported by that model.
 - The read flow still returns only after DOM2 verification and then publishes the complete `{model, effort}` state to MyTool.
 
+## Check and synchronize button flow (2026-09-27)
+
+- The MyTool button first compares its selected model and effort with the latest live state published by ChatGPT.
+- An exact match completes locally without creating a job or opening the ChatGPT model picker.
+- A mismatch or missing live state creates one sync_model job and runs DOM1 -> DOM2 -> DOM3 -> DOM2 -> close.
+- The sync flow logs each transition and pauses one second after visible UI changes.
+- DOM3 changes the model only when the checked row differs. DOM2 changes reasoning effort only when the verified value differs.
+- The final model and effort are verified before the menu closes.
+- A successful synchronization publishes the final {model, effort} state to Bridge before the job is marked completed, then MyTool refreshes its connection state.
+- The synchronization flow never writes or sends a prompt and is not automatically retried after a website-side mutation.
+
+## ARIA reasoning-slider fallback (2026-09-27)
+
+- DOM2 first uses the known reasoning-slider container selector.
+- If that container changed, MyTool accepts exactly one active `role=slider` thumb in the current popup and derives its interaction container.
+- Keyboard changes rely on validated `aria-valuemin`, `aria-valuemax`, and `aria-valuenow`; slider tick elements are not required for keyboard interaction.
+- Tick clicking remains a fallback only when the target tick is present and enabled.
+- The live composer-pill label participates in effort verification after a change instead of always returning the cached initial label.
+- Missing, ambiguous, or structurally invalid sliders report `MODEL_PICKER_FAILED`, not an incorrect unsupported-model result.
+
+## Delayed and expanded effort-control discovery (2026-09-27)
+
+- After returning to DOM2, synchronization waits up to five seconds for the effort control to render.
+- A unique active control may be a `role=slider`, an `input[type=range]`, or an element exposing all three ARIA value attributes.
+- Native range inputs may provide min, max, and current value through DOM properties instead of explicit ARIA attributes.
+- Duplicate matches are deduplicated; more than one distinct candidate remains an unsafe ambiguity and is not clicked.
+- `MODEL_PICKER_FAILED` is a supported wire error in both the extension and Bridge, so MyTool receives the real failure message.
+
+## Stabilize the actual DOM2 Power slider (2026-09-27)
+
+- The confirmed DOM2 control is a `role=menuitem` named `Power` with `ArrowLeft ArrowRight` keyboard shortcuts.
+- Its semantic thumb uses `role=slider`, min 0, max 3, and integer values for Instant, Medium, High, and Extra High.
+- After a model change, MyTool waits up to five seconds for all slider values to become structurally valid instead of accepting the first partially rendered element.
+- Effort is read again after stabilization; if the requested point is already active, no keyboard or pointer action is sent.
+- Before keyboard interaction, a known target tick is checked for its locked state.
+- After arrow interaction, MyTool waits for both the semantic value and visible effort label before falling back to a tick click.
+- A stabilization failure reports only bounded slider metadata: min, max, value, and tick count.
+
 Bộ popup kiểm tra aria-controls, aria-labelledby nhiều ID, control render trễ, popup chỉ có suy luận, và không nhận nhầm dialog khác.
 
 Các kiểm thử DOM dùng trang mô phỏng. Không coi việc test qua là bằng chứng đã chạy được trên tài khoản ChatGPT thật. Sau khi reload extension và tab ChatGPT, đối chiếu các log DOM2 OPEN, DOM3 OPEN, DOM2 READY và MODEL AND EFFORT VERIFIED; MENU CLOSED. Nếu vẫn lỗi, cần outerHTML popup hiện tại hoặc log thuộc tính popup để sửa đúng selector.

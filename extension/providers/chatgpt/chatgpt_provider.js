@@ -46,7 +46,7 @@ export class ChatGPTProvider extends BaseProvider {
   }
 
   async selectModel(model, effort) {
-    return selectChatGPTModel(model, effort, { document: this.doc });
+    return selectChatGPTModel(model, effort, { document: this.doc, log: this.log });
   }
 
   async getModelState() {

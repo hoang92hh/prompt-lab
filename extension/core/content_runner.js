@@ -30,6 +30,21 @@ async function waitForModelStateReady(provider, timeoutMs = 20000) {
   return false;
 }
 
+async function publishModelState(state) {
+  try {
+    const result = await chrome.runtime.sendMessage({ type: "MYTOOL_MODEL_STATE", state });
+    if (!result?.saved) {
+      console.warn("[MyTool][MODEL_STATE_SAVE_ERROR]", result?.error || "Bridge did not save the state.");
+      return false;
+    }
+    console.info("[MyTool][MODEL_STATE_SAVED]", state);
+    return true;
+  } catch (error) {
+    console.warn("[MyTool][MODEL_STATE_SAVE_ERROR]", error?.message || String(error));
+    return false;
+  }
+}
+
 async function logCurrentModelState(reason) {
   try {
     console.info("[MyTool][MODEL_STATE_REASON]", reason);
@@ -42,16 +57,7 @@ async function logCurrentModelState(reason) {
     }
     const state = await provider.getModelState();
     console.info("[MyTool][MODEL_STATE]", state);
-    try {
-      const result = await chrome.runtime.sendMessage({ type: "MYTOOL_MODEL_STATE", state });
-      if (!result?.saved) {
-        console.warn("[MyTool][MODEL_STATE_SAVE_ERROR]", result?.error || "Bridge did not save the state.");
-      } else {
-        console.info("[MyTool][MODEL_STATE_SAVED]", state);
-      }
-    } catch (error) {
-      console.warn("[MyTool][MODEL_STATE_SAVE_ERROR]", error?.message || String(error));
-    }
+    await publishModelState(state);
     return true;
   } catch (error) {
     console.warn("[MyTool][MODEL_STATE_ERROR]", error?.code || "PROVIDER_ERROR", error?.message || String(error));
@@ -110,6 +116,12 @@ async function execute(job, record) {
     }
     if (job.action === "sync_model") {
       const selection = await provider.selectModel(job.model, job.effort);
+      if (!await publishModelState({ model: selection.model, effort: selection.effort })) {
+        throw executionError(
+          "PROVIDER_ERROR",
+          "ChatGPT model was updated, but the new state could not be saved to MyTool.",
+        );
+      }
       record.result = { job_id: job.job_id, status: "completed",
         text: (selection.changed ? "Đã đồng bộ: " : "Đã khớp: ") + selection.model + " / " + selection.effort };
       return;
