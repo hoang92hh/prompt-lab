@@ -1,4 +1,5 @@
 ﻿import {stepCatalog} from "./steps/index.js";
+import {AI_PROVIDER_CONFIG} from "./config/ai_defaults.js";
 
 const $ = selector => document.querySelector(selector);
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -14,6 +15,7 @@ let latestModelState = null;
 let latestModelStateKey = null;
 let modelComparisonRevision = 0;
 let activeStepId = null;
+let activeProvider = "chatgpt";
 let modelControlsReady = false;
 
 function renderStepShells() {
@@ -59,8 +61,7 @@ function selectStep(stepId) {
   $("#response-title").textContent = step.outputTitle;
   if (modelControlsReady) {
     modelComparisonRevision += 1;
-    applyStepModelDefaults(step);
-    if (!step.defaultModel && latestModelState) renderModelComparison();
+    applyStepModelDefaults(activeProvider, step.id);
   }
 }
 
@@ -69,6 +70,7 @@ selectStep(stepCatalog[0].id);
 
 for (const provider of ["chatgpt","claude"]) {
   $("#tab-" + provider).addEventListener("click", () => {
+    activeProvider = provider;
     for (const name of ["chatgpt","claude"]) {
       for (const part of [name, name + "-compose", name + "-output"]) $("#" + part).hidden = name !== provider;
       $("#tab-" + name).setAttribute("aria-selected", String(name === provider));
@@ -76,6 +78,10 @@ for (const provider of ["chatgpt","claude"]) {
     const label = provider === "chatgpt" ? "ChatGPT" : "Claude";
     $("#question-provider").textContent = label;
     $("#response-provider").textContent = label;
+    if (modelControlsReady) {
+      modelComparisonRevision += 1;
+      applyStepModelDefaults(provider, activeStepId);
+    }
   });
 }
 
@@ -266,39 +272,55 @@ function selectedProjectFields() {
   return project ? {project_id: project.id, project_url: project.url} : {};
 }
 
-const modelCatalog = {
-  "GPT-5.5": ["Instant", "Medium", "High", "Extra High"],
-  "GPT-5.5 Pro": ["Pro Standard", "Pro Extended"],
-  "GPT-5.6 Luna": ["Instant", "Medium", "High", "Extra High"],
-  "GPT-5.6 Terra": ["Instant", "Medium", "High", "Extra High"],
-  "GPT-5.6 Sol": ["Instant", "Medium", "High", "Extra High"],
-  "GPT-5.6 Sol Pro": ["Pro"],
-  "GPT-6 Pro": ["Pro"]
-};
-for (const model of Object.keys(modelCatalog)) $("#model").add(new Option(model, model));
-
-function populateEffortOptions(model, selectedEffort = "") {
-  const levels = modelCatalog[model] || [];
-  $("#effort").replaceChildren(new Option("Chọn mức suy luận", ""));
-  for (const level of levels) $("#effort").add(new Option(level, level));
-  $("#effort").disabled = levels.length === 0;
-  if (levels.includes(selectedEffort)) $("#effort").value = selectedEffort;
+function providerModelControls(provider) {
+  const config = AI_PROVIDER_CONFIG[provider];
+  if (!config) return null;
+  return {
+    config,
+    modelSelect: $("#" + config.modelSelectId),
+    effortSelect: $("#" + config.effortSelectId)
+  };
 }
 
-function applyStepModelDefaults(step) {
-  if (!step?.defaultModel || !step?.defaultEffort) return;
-  if (!modelCatalog[step.defaultModel]?.includes(step.defaultEffort)) {
-    console.warn("[MyTool][STEP_MODEL_DEFAULT_ERROR]", step.id, step.defaultModel, step.defaultEffort);
+function populateModelOptions(provider) {
+  const controls = providerModelControls(provider);
+  if (!controls?.modelSelect) return;
+  controls.modelSelect.replaceChildren(new Option("Chọn model", ""));
+  for (const model of Object.keys(controls.config.modelCatalog)) {
+    controls.modelSelect.add(new Option(model, model));
+  }
+}
+
+function populateEffortOptions(provider, model, selectedEffort = "") {
+  const controls = providerModelControls(provider);
+  if (!controls?.effortSelect) return;
+  const levels = controls.config.modelCatalog[model] || [];
+  controls.effortSelect.replaceChildren(new Option("Chọn mức suy luận", ""));
+  for (const level of levels) controls.effortSelect.add(new Option(level, level));
+  if (provider === "chatgpt") controls.effortSelect.disabled = levels.length === 0;
+  if (levels.includes(selectedEffort)) controls.effortSelect.value = selectedEffort;
+}
+
+function applyStepModelDefaults(provider, stepId) {
+  const controls = providerModelControls(provider);
+  const defaults = controls?.config.stepDefaults[stepId];
+  if (!controls?.modelSelect || !controls.effortSelect || !defaults) return;
+  if (!controls.config.modelCatalog[defaults.model]?.includes(defaults.effort)) {
+    console.warn("[MyTool][STEP_MODEL_DEFAULT_ERROR]", provider, stepId, defaults.model, defaults.effort);
     return;
   }
-  $("#model").value = step.defaultModel;
-  populateEffortOptions(step.defaultModel, step.defaultEffort);
-  updateModelCheck();
-  if (latestModelState) renderModelComparison();
+  controls.modelSelect.value = defaults.model;
+  populateEffortOptions(provider, defaults.model, defaults.effort);
+  if (provider === "chatgpt") {
+    updateModelCheck();
+    if (latestModelState) renderModelComparison();
+  }
 }
 
+for (const provider of Object.keys(AI_PROVIDER_CONFIG)) populateModelOptions(provider);
+
 $("#model").addEventListener("change", () => {
-  populateEffortOptions($("#model").value);
+  populateEffortOptions("chatgpt", $("#model").value);
 });
 
 function updateModelCheck() {
@@ -314,7 +336,7 @@ for (const id of ["model", "effort", "project"]) {
   });
 }
 modelControlsReady = true;
-applyStepModelDefaults(stepCatalog.find(step => step.id === activeStepId));
+applyStepModelDefaults(activeProvider, activeStepId);
 
 $("#check-model").addEventListener("click", () => {
   if (active || !$("#model").value || !$("#effort").value) return;

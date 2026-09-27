@@ -73,7 +73,16 @@ Chạy từ thư mục mytool:
 - Step 1 declares GPT-5.5 with reasoning level Medium.
 - The default is applied when MyTool first opens Step 1 and whenever the user selects Step 1 again.
 - Applying the default updates only the MyTool selectors and comparison result. It does not change ChatGPT until the user runs the model synchronization action.
-- Steps 2 and 3 remain unchanged and do not declare model defaults.
+- This initial behavior was superseded by the provider-specific defaults below.
+
+## Provider-specific step defaults (2026-09-27)
+
+- Model and reasoning defaults now live in `app/gui/config/ai_defaults.js`, not in individual step modules.
+- ChatGPT defaults are Step 1 `GPT-5.5 / Medium`, Step 2 `GPT-5.6 Sol / Medium`, and Step 3 `GPT-5.6 Sol / Medium`.
+- Claude currently declares the same values through separate constants so its defaults can diverge without changing ChatGPT configuration.
+- Selecting a step applies the active provider's configured pair to that provider's model controls.
+- Selecting a provider reapplies that provider's default for the active step.
+- Claude controls and transport remain disabled; this configuration change does not implement a Claude adapter.
 
 ## Model comparison warning lifecycle (2026-09-27)
 

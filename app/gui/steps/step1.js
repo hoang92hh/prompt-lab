@@ -1,8 +1,6 @@
 ﻿export const step1 = {
   id: "step1",
   label: "Step 1",
-  defaultModel: "GPT-5.5",
-  defaultEffort: "Medium",
   inputTitle: "2. Câu hỏi và trạng thái",
   outputTitle: "3. Câu trả lời",
   inputHtml: `
