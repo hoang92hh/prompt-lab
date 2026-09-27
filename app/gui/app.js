@@ -7,7 +7,14 @@ let projects = [];
 const mytoolSessionId = crypto.randomUUID();
 let lastExtensionSessionId = null;
 let connectionPollRunning = false;
-let connectionWarningDismissed = false;
+let activeWarningKind = null;
+let activeWarningKey = null;
+let dismissedWarningKey = null;
+let latestModelState = null;
+let latestModelStateKey = null;
+let modelComparisonRevision = 0;
+let activeStepId = null;
+let modelControlsReady = false;
 
 function renderStepShells() {
   const switcher = $("#step-switcher");
@@ -41,6 +48,7 @@ function renderStepShells() {
 function selectStep(stepId) {
   const step = stepCatalog.find(item => item.id === stepId);
   if (!step) return;
+  activeStepId = stepId;
   for (const panel of document.querySelectorAll("[data-step-input], [data-step-output]")) {
     panel.hidden = panel.dataset.stepInput !== stepId && panel.dataset.stepOutput !== stepId;
   }
@@ -49,6 +57,11 @@ function selectStep(stepId) {
   }
   $("#question-title").textContent = step.inputTitle;
   $("#response-title").textContent = step.outputTitle;
+  if (modelControlsReady) {
+    modelComparisonRevision += 1;
+    applyStepModelDefaults(step);
+    if (!step.defaultModel && latestModelState) renderModelComparison();
+  }
 }
 
 renderStepShells();
@@ -73,21 +86,59 @@ async function api(path, options) {
   return data;
 }
 
-function showConnectionWarning(message) {
-  if (connectionWarningDismissed) return;
+function showConnectionWarning(message, kind = "connection", key = kind + ":" + message) {
+  if (dismissedWarningKey === key) return;
+  activeWarningKind = kind;
+  activeWarningKey = key;
   $("#connection-warning-message").textContent = message;
   $("#connection-warning").hidden = false;
 }
 
-function clearConnectionWarning() {
+function clearConnectionWarning(kind = null) {
+  if (kind && activeWarningKind !== kind) return;
   $("#connection-warning").hidden = true;
   $("#connection-warning-message").textContent = "";
+  activeWarningKind = null;
+  activeWarningKey = null;
 }
 
 $("#connection-warning-close").addEventListener("click", () => {
-  connectionWarningDismissed = true;
+  dismissedWarningKey = activeWarningKey;
   clearConnectionWarning();
 });
+
+function renderModelComparison() {
+  if (!latestModelState) return;
+  const actual = latestModelState.model + " / " + latestModelState.effort;
+  const expectedModel = $("#model").value;
+  const expectedEffort = $("#effort").value;
+  if (!expectedModel || !expectedEffort) {
+    $("#model-check").textContent = "ChatGPT hi\u1ec7n t\u1ea1i: " + actual + ". Ch\u1ecdn model v\u00e0 m\u1ee9c suy lu\u1eadn trong MyTool \u0111\u1ec3 so s\u00e1nh.";
+    clearConnectionWarning("model-mismatch");
+    return;
+  }
+  const expected = expectedModel + " / " + expectedEffort;
+  if (expectedModel === latestModelState.model && expectedEffort === latestModelState.effort) {
+    $("#model-check").textContent = "\u0110\u00e3 kh\u1edbp: " + actual;
+    clearConnectionWarning("model-mismatch");
+    return;
+  }
+  $("#model-check").textContent = "Ch\u01b0a kh\u1edbp. ChatGPT: " + actual + " | MyTool: " + expected;
+  const warningKey = [
+    "model-mismatch",
+    activeStepId || "",
+    modelComparisonRevision,
+    latestModelState.updated_at || "",
+    actual,
+    expected,
+  ].join(":");
+  showConnectionWarning(
+    "Model ch\u01b0a \u0111\u1ed3ng b\u1ed9. ChatGPT \u0111ang d\u00f9ng " + actual + ", MyTool \u0111ang ch\u1ecdn " + expected +
+    ". H\u00e3y d\u00f9ng Ki\u1ec3m tra / \u0111\u1ed3ng b\u1ed9 model n\u1ebfu mu\u1ed1n \u0111i\u1ec1u ch\u1ec9nh.",
+    "model-mismatch",
+    warningKey
+  );
+}
 
 function readConnectionState(state) {
   if (state.mytool_session_id && state.mytool_session_id !== mytoolSessionId) {
@@ -98,6 +149,25 @@ function readConnectionState(state) {
       showConnectionWarning("Extension vừa được tải lại. Trạng thái model có thể không còn đồng bộ; hãy dùng “Kiểm tra / đồng bộ model” nếu cần.");
     }
     lastExtensionSessionId = state.extension_session_id;
+  }
+  if (state.extension_connected && state.model_state
+      && typeof state.model_state.model === "string"
+      && typeof state.model_state.effort === "string") {
+    const stateKey = [
+      state.model_state.model,
+      state.model_state.effort,
+      state.model_state.updated_at || "",
+    ].join(":");
+    if (stateKey !== latestModelStateKey) {
+      latestModelStateKey = stateKey;
+      modelComparisonRevision += 1;
+    }
+    latestModelState = state.model_state;
+    renderModelComparison();
+  } else if (!state.extension_connected) {
+    latestModelState = null;
+    latestModelStateKey = null;
+    clearConnectionWarning("model-mismatch");
   }
 }
 
@@ -206,11 +276,29 @@ const modelCatalog = {
   "GPT-6 Pro": ["Pro"]
 };
 for (const model of Object.keys(modelCatalog)) $("#model").add(new Option(model, model));
-$("#model").addEventListener("change", () => {
-  const levels = modelCatalog[$("#model").value] || [];
+
+function populateEffortOptions(model, selectedEffort = "") {
+  const levels = modelCatalog[model] || [];
   $("#effort").replaceChildren(new Option("Chọn mức suy luận", ""));
   for (const level of levels) $("#effort").add(new Option(level, level));
   $("#effort").disabled = levels.length === 0;
+  if (levels.includes(selectedEffort)) $("#effort").value = selectedEffort;
+}
+
+function applyStepModelDefaults(step) {
+  if (!step?.defaultModel || !step?.defaultEffort) return;
+  if (!modelCatalog[step.defaultModel]?.includes(step.defaultEffort)) {
+    console.warn("[MyTool][STEP_MODEL_DEFAULT_ERROR]", step.id, step.defaultModel, step.defaultEffort);
+    return;
+  }
+  $("#model").value = step.defaultModel;
+  populateEffortOptions(step.defaultModel, step.defaultEffort);
+  updateModelCheck();
+  if (latestModelState) renderModelComparison();
+}
+
+$("#model").addEventListener("change", () => {
+  populateEffortOptions($("#model").value);
 });
 
 function updateModelCheck() {
@@ -219,9 +307,15 @@ function updateModelCheck() {
 for (const id of ["model", "effort", "project"]) {
   $("#" + id).addEventListener("change", () => {
     updateModelCheck();
-    $("#model-check").textContent = "Lựa chọn đã thay đổi. Nhấn kiểm tra để đồng bộ với ChatGPT.";
+    if (id === "project") return;
+    modelComparisonRevision += 1;
+    if (latestModelState) renderModelComparison();
+    else $("#model-check").textContent = "L\u1ef1a ch\u1ecdn \u0111\u00e3 thay \u0111\u1ed5i. Ch\u01b0a nh\u1eadn \u0111\u01b0\u1ee3c tr\u1ea1ng th\u00e1i model t\u1eeb ChatGPT.";
   });
 }
+modelControlsReady = true;
+applyStepModelDefaults(stepCatalog.find(step => step.id === activeStepId));
+
 $("#check-model").addEventListener("click", () => {
   if (active || !$("#model").value || !$("#effort").value) return;
   $("#model-check").textContent = "Đang kiểm tra và đồng bộ trên ChatGPT...";

@@ -8,6 +8,11 @@ let activeJob = null;
 let projectChatOpening = false;
 const factory = new ProviderFactory();
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
+let modelStateReadRunning = false;
+let modelStateReadQueued = false;
+let lastModelStateUrl = location.href;
+let navigationReadTimer = null;
+let firstModelStateReadComplete = false;
 
 async function waitForModelStateReady(provider, timeoutMs = 20000) {
   const deadline = Date.now() + timeoutMs;
@@ -25,21 +30,75 @@ async function waitForModelStateReady(provider, timeoutMs = 20000) {
   return false;
 }
 
-async function logCurrentModelState() {
+async function logCurrentModelState(reason) {
   try {
+    console.info("[MyTool][MODEL_STATE_REASON]", reason);
     const provider = factory.create("chatgpt", {
       log: step => console.info("[MyTool][MODEL_STATE_STEP]", step),
     });
     if (!(await waitForModelStateReady(provider))) {
       console.warn("[MyTool][MODEL_STATE_ERROR] ChatGPT is not ready.");
-      return;
+      return false;
     }
     const state = await provider.getModelState();
     console.info("[MyTool][MODEL_STATE]", state);
+    try {
+      const result = await chrome.runtime.sendMessage({ type: "MYTOOL_MODEL_STATE", state });
+      if (!result?.saved) {
+        console.warn("[MyTool][MODEL_STATE_SAVE_ERROR]", result?.error || "Bridge did not save the state.");
+      } else {
+        console.info("[MyTool][MODEL_STATE_SAVED]", state);
+      }
+    } catch (error) {
+      console.warn("[MyTool][MODEL_STATE_SAVE_ERROR]", error?.message || String(error));
+    }
+    return true;
   } catch (error) {
     console.warn("[MyTool][MODEL_STATE_ERROR]", error?.code || "PROVIDER_ERROR", error?.message || String(error));
+    return false;
   }
 }
+
+async function requestModelStateRead(reason) {
+  if (modelStateReadRunning) {
+    modelStateReadQueued = true;
+    return;
+  }
+  modelStateReadRunning = true;
+  let currentReason = reason;
+  try {
+    do {
+      modelStateReadQueued = false;
+      const readSucceeded = await logCurrentModelState(currentReason);
+      if (!firstModelStateReadComplete && readSucceeded) {
+        firstModelStateReadComplete = true;
+        lastModelStateUrl = location.href;
+        clearTimeout(navigationReadTimer);
+        navigationReadTimer = null;
+        modelStateReadQueued = false;
+        console.info("[MyTool][MODEL_STATE_NAVIGATION_COALESCED]", lastModelStateUrl);
+      }
+      currentReason = "queued-navigation";
+    } while (modelStateReadQueued);
+  } finally {
+    modelStateReadRunning = false;
+  }
+}
+
+function scheduleModelStateRead(reason) {
+  clearTimeout(navigationReadTimer);
+  navigationReadTimer = setTimeout(() => {
+    navigationReadTimer = null;
+    void requestModelStateRead(reason);
+  }, 1000);
+}
+
+setInterval(() => {
+  const currentUrl = location.href;
+  if (currentUrl === lastModelStateUrl) return;
+  lastModelStateUrl = currentUrl;
+  scheduleModelStateRead("navigation");
+}, 500);
 
 async function execute(job, record) {
   try {
@@ -144,4 +203,4 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 });
 
-void logCurrentModelState();
+scheduleModelStateRead("initial-load");

@@ -10,6 +10,7 @@ class ConnectionState:
         self._mytool_session_id = None
         self._extension_session_id = None
         self._extension_seen_at = None
+        self._model_state = None
 
     def register_mytool(self, session_id: str):
         with self._lock:
@@ -22,8 +23,25 @@ class ConnectionState:
 
     def register_extension(self, session_id: str):
         with self._lock:
+            if (self._extension_session_id is not None
+                    and self._extension_session_id != session_id):
+                self._model_state = None
             self._extension_session_id = session_id
             self._extension_seen_at = time.monotonic()
+            return self._snapshot_locked()
+
+    def register_model_state(self, session_id: str, model: str, effort: str):
+        with self._lock:
+            if (self._extension_session_id is not None
+                    and self._extension_session_id != session_id):
+                self._model_state = None
+            self._extension_session_id = session_id
+            self._extension_seen_at = time.monotonic()
+            self._model_state = {
+                "model": model,
+                "effort": effort,
+                "updated_at": time.time(),
+            }
             return self._snapshot_locked()
 
     def snapshot(self):
@@ -37,4 +55,5 @@ class ConnectionState:
             "mytool_session_id": self._mytool_session_id,
             "extension_session_id": self._extension_session_id,
             "extension_connected": connected,
+            "model_state": self._model_state if connected else None,
         }

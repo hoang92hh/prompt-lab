@@ -10,6 +10,13 @@ const allLevels = [...standardLevels, "Pro Standard", "Pro Extended", "Pro"];
 const levelsForModel = model => / pro$/i.test(model)
   ? (alias(model) === "5.5 pro" ? ["Pro Standard", "Pro Extended"] : ["Pro"])
   : standardLevels;
+const effortFromText = (value, levels = allLevels) => {
+  const name = normalize(value);
+  return [...levels].sort((left, right) => right.length - left.length).find(level => {
+    const normalizedLevel = normalize(level);
+    return name === normalizedLevel || name.endsWith(" " + normalizedLevel);
+  }) || "";
+};
 const visible = node => !!node && node.isConnected && node.getClientRects().length > 0
   && !node.closest('[hidden], [inert], [aria-hidden="true"], [data-active="false"]')
   && node.ownerDocument.defaultView.getComputedStyle(node).visibility !== "hidden";
@@ -174,8 +181,7 @@ class ModelPicker {
       ariaExpanded: this.trigger.getAttribute("aria-expanded") || "",
       state: this.trigger.dataset.state || "",
     }));
-    this.initialEffort = allLevels.find(
-      level => normalize(level) === normalize(label(this.trigger))) || "";
+    this.initialEffort = effortFromText(label(this.trigger));
     await this.toggle(true);
   }
   async advanced() {
@@ -212,15 +218,13 @@ class ModelPicker {
       throw fail("DOM3 -> DOM2: ChatGPT reasoning controls did not return.", "MODEL_PICKER_FAILED");
     }
   }
-  effortLabel() {
+  effortLabel(levels = allLevels) {
     const node = this.menu() && this.find(S.effortLabel, this.menu());
-    const name = label(node);
-    return allLevels.find(level => normalize(level) === normalize(name)) || "";
+    return effortFromText(label(node), levels);
   }
-  triggerEffort() {
-    if (this.initialEffort) return this.initialEffort;
-    const name = label(this.trigger);
-    return allLevels.find(level => normalize(level) === normalize(name)) || "";
+  triggerEffort(levels = allLevels) {
+    if (this.initialEffort && levels.includes(this.initialEffort)) return this.initialEffort;
+    return effortFromText(label(this.trigger), levels);
   }
   sliderState() {
     const container = this.menu() && this.find(S.effortSlider, this.menu());
@@ -233,7 +237,7 @@ class ModelPicker {
   }
   readEffort(levels) {
     const state = this.sliderState();
-    const name = this.effortLabel();
+    const name = this.effortLabel(levels);
     if (!state) return name;
     const { min, max, value } = state;
     if (min !== 0 || max !== levels.length - 1 || !Number.isInteger(value) || !levels[value]) return "";
@@ -313,8 +317,10 @@ export async function readChatGPTModelState({ document: doc = document, log = ()
     log("DOM2 RETURNED");
     await pause(1000);
 
+    const modelLevels = levelsForModel(model);
     const effort = await waitFor(() =>
-      picker.readEffort(levelsForModel(model)) || picker.effortLabel() || picker.triggerEffort(),
+      picker.readEffort(modelLevels) || picker.effortLabel(modelLevels)
+        || picker.triggerEffort(modelLevels),
     2000, 100);
     if (!effort) {
       throw fail("DOM2: ChatGPT reasoning level could not be verified.", "MODEL_PICKER_FAILED");

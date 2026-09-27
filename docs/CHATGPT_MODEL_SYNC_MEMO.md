@@ -57,6 +57,55 @@ Chạy từ thư mục mytool:
     node tests/response_sender.test.cjs
     python -m unittest discover -s tests -p 'test_*.py'
 
+## Publish the current model state to MyTool (2026-09-27)
+
+- After a successful DOM read, the content script sends `{model, effort}` to the extension service worker.
+- The service worker publishes the value to `POST /api/connection/model` with its extension session marker.
+- Bridge keeps only the latest live value in memory and exposes it as `model_state` from `GET /api/connection`.
+- A new extension session clears the previous model state. A timed-out extension does not expose stale model data.
+- MyTool compares the published value with the currently selected model and effort. Missing MyTool selections show the ChatGPT value without declaring a mismatch.
+- A mismatch uses the existing dismissible warning. A match clears only a model-mismatch warning, not an unrelated connection warning.
+- Project or conversation navigation still triggers the existing DOM read; the newly published state replaces the previous value.
+- That transport phase did not yet define per-step defaults and did not change the ChatGPT model automatically.
+
+## Step 1 model default (2026-09-27)
+
+- Step 1 declares GPT-5.5 with reasoning level Medium.
+- The default is applied when MyTool first opens Step 1 and whenever the user selects Step 1 again.
+- Applying the default updates only the MyTool selectors and comparison result. It does not change ChatGPT until the user runs the model synchronization action.
+- Steps 2 and 3 remain unchanged and do not declare model defaults.
+
+## Model comparison warning lifecycle (2026-09-27)
+
+- MyTool compares the latest live ChatGPT model state with the model and effort currently selected for the active step.
+- A matching pair hides only the model-mismatch warning and reports the matching values in the model status area.
+- A mismatching pair shows the existing warning box with both ChatGPT and MyTool values.
+- Closing the warning suppresses only that comparison result. Repeated connection polling does not reopen it.
+- A new published model state, a new step selection, or a changed MyTool model/effort creates a new comparison result and may show a new warning.
+- Connection-session warnings and model-mismatch warnings use separate warning identities.
+
+## Initial model-read debounce (2026-09-27)
+
+- Initial page load and URL stabilization use the same one-second debounce before model DOM automation starts.
+- A ChatGPT URL change during that debounce resets the timer and replaces the pending initial reason with navigation, producing one read after the URL becomes stable.
+- A URL change after a read has already started still queues one follow-up read, preserving real project or conversation navigation handling.
+- The DOM1 -> DOM2 -> DOM3 -> DOM2 read sequence and Bridge publication are unchanged.
+
+## Coalesce navigation during the first successful read (2026-09-27)
+
+- The first successful model-state read establishes the final initial ChatGPT URL.
+- URL changes, pending navigation timers, and queued navigation flags created while that first read is running are absorbed into the successful initial result.
+- After the first successful read, later URL changes continue to schedule normal navigation reads.
+- A failed first read does not mark initialization complete and does not discard a queued retry opportunity.
+- The content script logs `MODEL_STATE_NAVIGATION_COALESCED` when the initial navigation work has been absorbed.
+
+## Read effort from a combined composer-pill label (2026-09-27)
+
+- ChatGPT may render the DOM1 trigger as a combined label such as `5.5 Medium` instead of only `Medium`.
+- Effort parsing accepts an exact label or a complete effort suffix, checking longer labels first so `Extra High` is not reduced to `High`.
+- After DOM3 identifies the model, DOM2 verification restricts trigger and label parsing to the reasoning levels supported by that model.
+- The read flow still returns only after DOM2 verification and then publishes the complete `{model, effort}` state to MyTool.
+
 Bộ popup kiểm tra aria-controls, aria-labelledby nhiều ID, control render trễ, popup chỉ có suy luận, và không nhận nhầm dialog khác.
 
 Các kiểm thử DOM dùng trang mô phỏng. Không coi việc test qua là bằng chứng đã chạy được trên tài khoản ChatGPT thật. Sau khi reload extension và tab ChatGPT, đối chiếu các log DOM2 OPEN, DOM3 OPEN, DOM2 READY và MODEL AND EFFORT VERIFIED; MENU CLOSED. Nếu vẫn lỗi, cần outerHTML popup hiện tại hoặc log thuộc tính popup để sửa đúng selector.
@@ -129,4 +178,6 @@ Hướng chẩn đoán:
 - Sau mỗi thay đổi UI (mở DOM2, mở DOM3, quay lại DOM2, đóng menu) có khoảng quan sát 1 giây. DOM2 -> DOM3 và DOM3 -> DOM2 dùng pointer/mouse đầy đủ có tọa độ, sau đó fallback phím điều hướng nếu giao diện chưa chuyển.
 - Việc không tìm thấy `[data-max-effort]` ở DOM2 không được chặn mở DOM3; text của pill DOM1 (ví dụ `Instant`) là fallback effort và được xác minh lại sau khi quay về DOM2.
 - Xác nhận DOM3 bằng ít nhất một dòng model radio đang visible, không chỉ dựa vào wrapper advanced view. Xác nhận quay về DOM2 bằng simple view, `Select model` hoặc effort slider đang visible. Effort trên pill DOM1 được lưu trước khi mở menu vì text trigger có thể đổi trong lúc popup mở.
-- Lượt thay đổi này chưa chuyển trạng thái về MyTool, chưa so sánh default và chưa thay đổi model.
+- Content script so sánh `location.href` mỗi 500 ms. Khi URL project hoặc cuộc thoại thay đổi, debounce 1 giây rồi đọc lại trạng thái; reload document vẫn dùng lượt `initial-load`.
+- Các lượt đọc model không chạy song song. Nếu navigation xảy ra khi một lượt đang chạy, chỉ xếp một lượt `queued-navigation` sau khi lượt hiện tại kết thúc.
+- Lượt đọc hiện chuyển trạng thái mới nhất về MyTool để so sánh; Step 1 có default GPT-5.5 / Medium và hệ thống chưa tự thay đổi model.

@@ -105,6 +105,20 @@ class BridgeHandler(BaseHTTPRequestHandler):
                     or len(request["session_id"]) > 128):
                 fail(400, "INVALID_REQUEST", "A non-blank session_id is required.")
             self._send(200, self.server.connection_state.register_mytool(request["session_id"]))
+        elif path == "/api/connection/model":
+            if self.command != "POST":
+                fail(405, "METHOD_NOT_ALLOWED", "Use POST to publish the ChatGPT model state.")
+            extension_session_id = self.headers.get("X-MyTool-Extension-Session")
+            if (extension_session_id is None or not extension_session_id.strip()
+                    or len(extension_session_id) > 128):
+                fail(400, "INVALID_REQUEST", "A valid extension session marker is required.")
+            request = self._body()
+            if (not isinstance(request, dict) or set(request) != {"model", "effort"}
+                    or not all(isinstance(request.get(key), str) and request[key].strip()
+                               and len(request[key]) <= 128 for key in ("model", "effort"))):
+                fail(400, "INVALID_REQUEST", "Non-blank model and effort values are required.")
+            self._send(200, self.server.connection_state.register_model_state(
+                extension_session_id, request["model"].strip(), request["effort"].strip()))
         elif path == "/api/projects":
             if self.command != "GET":
                 fail(405, "METHOD_NOT_ALLOWED", "Use GET for projects.")

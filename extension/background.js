@@ -28,6 +28,23 @@ function extensionSessionId() {
   return extensionSessionPromise;
 }
 
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (sender.id !== chrome.runtime.id || message?.type !== "MYTOOL_MODEL_STATE") return;
+  const state = message.state;
+  if (!state || ![state.model, state.effort].every(
+    value => typeof value === "string" && value.trim())) {
+    sendResponse({ saved: false, error: "INVALID_MODEL_STATE" });
+    return;
+  }
+  void extensionSessionId().then(sessionId => client.publishModelState(state, sessionId)).then(() => {
+    sendResponse({ saved: true });
+  }).catch((error) => {
+    console.warn("[Bridge][MODEL_STATE_SAVE_ERROR]", error.message);
+    sendResponse({ saved: false, error: error.message });
+  });
+  return true;
+});
+
 export async function runLoop() {
   if (running) return;
   running = true;

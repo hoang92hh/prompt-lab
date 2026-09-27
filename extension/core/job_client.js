@@ -27,4 +27,19 @@ export class JobClient {
     // A 200 response means the Bridge has already atomically marked processing.
     return response.json();
   }
+
+  async publishModelState(state, extensionSessionId) {
+    const response = await this.fetchImpl(`${this.baseUrl}/api/connection/model`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-MyTool-Extension-Session": extensionSessionId,
+      },
+      body: JSON.stringify({ model: state.model, effort: state.effort }),
+      signal: AbortSignal.timeout(10000),
+      cache: "no-store",
+    });
+    if (!response.ok) throw new HttpError(response.status);
+    return response.json();
+  }
 }
