@@ -9,6 +9,7 @@ export const chatgptSelectors = Object.freeze({
   effortView: '[data-testid="composer-model-picker-slider-simple-view"]',
   modelOption: '[role="menuitemradio"]',
   modelName: '.truncate',
+  effortControl: '[role="menuitem"][aria-label="Power" i]',
   effortSlider: '[data-model-reasoning-effort-slider]',
   sliderValue: '[role="slider"]',
   sliderTick: '[data-selected][data-locked]',

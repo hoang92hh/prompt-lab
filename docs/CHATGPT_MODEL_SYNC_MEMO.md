@@ -144,6 +144,17 @@ Chạy từ thư mục mytool:
 - After arrow interaction, MyTool waits for both the semantic value and visible effort label before falling back to a tick click.
 - A stabilization failure reports only bounded slider metadata: min, max, value, and tick count.
 
+## Change effort through the DOM2 Power control (2026-09-27)
+
+- DOM2 binds keyboard interaction to the visible `role=menuitem` named `Power`; the nested semantic thumb is `aria-hidden` and has `tabindex=-1`.
+- `aria-valuenow` is the authoritative current value while a structurally valid slider is present: 0 Instant, 1 Medium, 2 High, and 3 Extra High.
+- A cached composer-pill label cannot confirm a requested effort when DOM2 exposes a stale or contradictory slider value.
+- Synchronization sends ArrowLeft or ArrowRight to the Power menuitem and waits for the semantic value after every step.
+- Clicking an enabled target tick remains a fallback when the advertised keyboard interaction does not change the value.
+- Success requires the final slider value and visible DOM2 effort label to agree before the picker closes.
+- The slider's live minimum and maximum define which standard effort positions are available for the current account; synchronization does not require every catalog level to exist.
+- A requested position outside that live range, or a known locked target point, is reported as unavailable for the selected model in the account.
+
 Bộ popup kiểm tra aria-controls, aria-labelledby nhiều ID, control render trễ, popup chỉ có suy luận, và không nhận nhầm dialog khác.
 
 Các kiểm thử DOM dùng trang mô phỏng. Không coi việc test qua là bằng chứng đã chạy được trên tài khoản ChatGPT thật. Sau khi reload extension và tab ChatGPT, đối chiếu các log DOM2 OPEN, DOM3 OPEN, DOM2 READY và MODEL AND EFFORT VERIFIED; MENU CLOSED. Nếu vẫn lỗi, cần outerHTML popup hiện tại hoặc log thuộc tính popup để sửa đúng selector.

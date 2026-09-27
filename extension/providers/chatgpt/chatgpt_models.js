@@ -232,6 +232,9 @@ class ModelPicker {
     const menu = this.menu();
     if (!menu) return null;
     let container = this.find(S.effortSlider, menu);
+    const controls = [...menu.querySelectorAll(S.effortControl)].filter(visible);
+    if (controls.length > 1) return null;
+    let control = controls[0] || null;
     // Radix's semantic thumb can be aria-hidden; read it, but interact with Power/the track.
     let thumb = container?.querySelector(S.sliderValue);
     if (!thumb) {
@@ -242,17 +245,19 @@ class ModelPicker {
       const unique = [...new Set(candidates)];
       if (unique.length !== 1) return null;
       thumb = unique[0];
-      container = thumb.closest('[aria-keyshortcuts], [data-radix-slider-root], [role="group"]')
+      container = thumb.closest(S.effortSlider + ', [data-radix-slider-root], [role="group"]')
         || thumb.parentElement;
     }
     if (!thumb) return null;
+    if (control && !control.contains(thumb)) return null;
+    control ||= thumb.closest(S.effortControl);
     const property = { "aria-valuemin": "min", "aria-valuemax": "max", "aria-valuenow": "value" };
     const number = key => thumb.hasAttribute(key)
       ? Number(thumb.getAttribute(key))
       : property[key] in thumb ? Number(thumb[property[key]]) : NaN;
     let ticks = [...(container?.querySelectorAll(S.sliderTick) || [])];
     if (!ticks.length) ticks = [...menu.querySelectorAll(S.sliderTick)];
-    return { container, thumb, min: number("aria-valuemin"), max: number("aria-valuemax"),
+    return { container, control, thumb, min: number("aria-valuemin"), max: number("aria-valuemax"),
       value: number("aria-valuenow"), ticks };
   }
   readEffort(levels) {
@@ -260,20 +265,28 @@ class ModelPicker {
     const name = this.effortLabel(levels);
     if (!state) return name;
     const { min, max, value } = state;
-    if (min !== 0 || max !== levels.length - 1 || !Number.isInteger(value) || !levels[value]) return "";
+    if (min !== 0 || !Number.isInteger(max) || max < min || max >= levels.length
+        || !Number.isInteger(value) || value < min || value > max || !levels[value]) return "";
     return !name || name === levels[value] ? levels[value] : "";
   }
   async chooseEffort(model, effort) {
     const levels = levelsForModel(model);
     if (!levels.includes(effort)) throw fail(effort + " is not supported for " + model + ".");
-    const currentEffort = () => this.readEffort(levels) || this.triggerEffort(levels);
+    // When DOM2 exposes a slider, it is authoritative. Never let a cached DOM1 pill
+    // hide a stale or contradictory aria-valuenow value after a model switch.
+    const currentEffort = () => {
+      const sliderEffort = this.readEffort(levels);
+      if (sliderEffort || this.sliderState()) return sliderEffort;
+      return this.effortLabel(levels) || this.triggerEffort(levels);
+    };
     if (currentEffort() === effort) return false;
     let lastSliderState = null;
     const state = await waitFor(() => {
       const candidate = this.sliderState();
       if (!candidate) return null;
       lastSliderState = candidate;
-      return candidate.min === 0 && candidate.max === levels.length - 1
+      return candidate.min === 0 && Number.isInteger(candidate.max)
+        && candidate.max >= candidate.min && candidate.max < levels.length
         && Number.isInteger(candidate.value)
         && candidate.value >= candidate.min && candidate.value <= candidate.max
         ? candidate : null;
@@ -290,36 +303,45 @@ class ModelPicker {
     }
     if (currentEffort() === effort) return false;
     const index = levels.indexOf(effort);
-    if (disabled(state.container) || disabled(state.thumb)) {
-      throw fail(effort + " is locked for this account.");
+    if (index < state.min || index > state.max) {
+      throw fail(effort + " is not available for " + model + " in this account.");
     }
-    const knownTargetTick = state.ticks.length === levels.length ? state.ticks[index] : null;
+    if (disabled(state.container) || disabled(state.thumb)) {
+      throw fail(effort + " is not available for " + model + " in this account.");
+    }
+    const availablePointCount = state.max - state.min + 1;
+    const knownTargetTick = state.ticks.length === availablePointCount
+      ? state.ticks[index - state.min] : null;
     if (knownTargetTick && disabled(knownTargetTick)) {
-      throw fail(effort + " is locked for this account.");
+      throw fail(effort + " is not available for " + model + " in this account.");
     }
     // Prefer the advertised keyboard interaction, which also works on Radix sliders.
-    const control = state.container.closest('[aria-keyshortcuts]')
-      || state.thumb.closest('[tabindex]') || state.thumb;
-    if (control) {
+    const shortcuts = state.control?.getAttribute("aria-keyshortcuts") || "";
+    const control = /(?:^|\s)ArrowLeft(?:\s|$)/.test(shortcuts)
+      && /(?:^|\s)ArrowRight(?:\s|$)/.test(shortcuts) ? state.control : null;
+    if (control && !disabled(control)) {
       control.focus();
       for (let step = 0; step < levels.length; step++) {
         const current = this.sliderState()?.value;
         if (!Number.isInteger(current) || current === index) break;
         const key = current < index ? "ArrowRight" : "ArrowLeft";
-        control.dispatchEvent(new this.win.KeyboardEvent("keydown", { key, code: key, bubbles: true, cancelable: true }));
-        control.dispatchEvent(new this.win.KeyboardEvent("keyup", { key, code: key, bubbles: true }));
+        this.dispatchKey(control, key);
         if (!await waitFor(() => this.sliderState()?.value !== current, 400)) break;
       }
     }
     if (!await waitFor(() => currentEffort() === effort, 1000, 100)) {
-      const target = this.sliderState()?.ticks[index];
+      const currentState = this.sliderState();
+      const target = currentState?.ticks.length === currentState.max - currentState.min + 1
+        ? currentState.ticks[index - currentState.min] : null;
       if (!target) {
         throw fail(
           "Reasoning keyboard control did not change to " + effort + " and no slider tick was available.",
           "MODEL_PICKER_FAILED",
         );
       }
-      if (disabled(target)) throw fail(effort + " is locked or unavailable.");
+      if (disabled(target)) {
+        throw fail(effort + " is not available for " + model + " in this account.");
+      }
       const rect = target.getBoundingClientRect();
       if (!rect.height) throw fail("Reasoning slider point has no clickable area.");
       const args = { bubbles: true, cancelable: true, button: 0, buttons: 1,
@@ -444,8 +466,9 @@ export async function selectChatGPTModel(model, effort, {
       throw fail("ChatGPT model changed during reasoning selection.", "MODEL_MISMATCH");
     }
     const modelLevels = levelsForModel(model);
+    const sliderState = picker.sliderState();
     const verifiedEffort = picker.readEffort(modelLevels)
-      || picker.effortLabel(modelLevels) || picker.triggerEffort(modelLevels);
+      || (!sliderState && (picker.effortLabel(modelLevels) || picker.triggerEffort(modelLevels)));
     if (verifiedEffort !== effort) {
       throw fail("ChatGPT did not confirm reasoning level " + effort + ".", "MODEL_MISMATCH");
     }
