@@ -123,13 +123,26 @@ class BridgeHandler(BaseHTTPRequestHandler):
             if self.command != "GET":
                 fail(405, "METHOD_NOT_ALLOWED", "Use GET for projects.")
             self._send(200, {"projects": self.server.projects.list()})
-        elif path.startswith("/api/outputs/"):
-            if self.command != "POST":
-                fail(405, "METHOD_NOT_ALLOWED", "Use POST to save an output.")
-            step = path[len("/api/outputs/"):]
-            if not step or "/" in step:
-                fail(404, "NOT_FOUND", "Unknown output step.")
-            self._send(201, self.server.outputs.save(step, self._body()))
+        elif path.startswith('/api/outputs/'):
+            if self.command == 'GET' and extension_origin:
+                fail(403, 'FORBIDDEN_ORIGIN', 'Output files can only be read by the local MyTool UI.')
+            tail = path[len('/api/outputs/'):]
+            if not tail:
+                fail(404, 'NOT_FOUND', 'Unknown output step.')
+            parts = tail.split('/', 1)
+            step = parts[0]
+            if len(parts) == 1:
+                if self.command == 'GET':
+                    self._send(200, {'outputs': self.server.outputs.recent(step)})
+                elif self.command == 'POST':
+                    self._send(201, self.server.outputs.save(step, self._body()))
+                else:
+                    fail(405, 'METHOD_NOT_ALLOWED', 'Use GET to list or POST to save outputs.')
+            elif self.command == 'GET':
+                filename = unquote(parts[1], encoding='utf-8', errors='strict')
+                self._send(200, self.server.outputs.load(step, filename))
+            else:
+                fail(405, 'METHOD_NOT_ALLOWED', 'Use GET to read an output.')
         elif path.startswith("/assets/"):
             if self.command != "GET":
                 fail(405, "METHOD_NOT_ALLOWED", "Use GET for application assets.")

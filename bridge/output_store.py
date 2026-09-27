@@ -57,6 +57,42 @@ class OutputStore:
                     continue
         fail(500, "INTERNAL_ERROR", "Could not allocate a unique output filename.")
 
+    def recent(self, step: str, limit: int = 3) -> list[dict]:
+        if not STEP_PATTERN.fullmatch(step):
+            fail(404, 'NOT_FOUND', 'Unknown output step.')
+        directory = self.root / step
+        if not directory.is_dir():
+            return []
+        with self._lock:
+            files = sorted(
+                (path for path in directory.iterdir()
+                 if path.is_file() and path.suffix.lower() == '.json'),
+                key=lambda path: path.stat().st_mtime_ns,
+                reverse=True,
+            )
+            return [
+                {'filename': path.name, 'size': path.stat().st_size}
+                for path in files[:limit]
+            ]
+
+    def load(self, step: str, filename: str) -> dict:
+        if not STEP_PATTERN.fullmatch(step):
+            fail(404, 'NOT_FOUND', 'Unknown output step.')
+        if (not isinstance(filename, str) or not filename
+                or Path(filename).name != filename
+                or not filename.lower().endswith('.json')):
+            fail(404, 'NOT_FOUND', 'Unknown output file.')
+        path = self.root / step / filename
+        with self._lock:
+            if not path.is_file():
+                fail(404, 'NOT_FOUND', 'Unknown output file.')
+            try:
+                with path.open('r', encoding='utf-8') as handle:
+                    data = json.load(handle)
+            except (UnicodeError, json.JSONDecodeError):
+                fail(500, 'INTERNAL_ERROR', 'Stored output is not valid UTF-8 JSON.')
+        return {'filename': filename, 'data': data}
+
     @staticmethod
     def _safe_name(value: str) -> str:
         value = INVALID_FILENAME_CHARS.sub("_", value.strip())
