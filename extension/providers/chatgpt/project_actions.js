@@ -30,9 +30,20 @@ async function waitFor(find, message, timeout = 12000) {
 
 function createPageButton() {
   if (!/^\/projects\/?$/.test(location.pathname)) return null;
-  const buttons = [...document.querySelectorAll('button, [role="button"]')].filter(enabled);
-  return buttons.find(node => hasLabel(node, /^(create|t\u1ea1o)$/i))
-    || buttons.find(node => hasLabel(node, /^(create project|t\u1ea1o d\u1ef1 \u00e1n)$/i));
+  const createLabel = /^(create|create project|t\u1ea1o|t\u1ea1o d\u1ef1 \u00e1n)$/i;
+  const selectors = [
+    'main [data-chatgpt-project-conversation-drop-target] > button[data-color="primary"][data-variant="solid"][data-size="xl"][data-pill]',
+    '[data-chatgpt-project-conversation-drop-target] > button[data-color="primary"][data-variant="solid"][data-size="xl"][data-pill]',
+    'main [data-chatgpt-project-conversation-drop-target] > button',
+  ];
+  for (const selector of selectors) {
+    const candidates = [...document.querySelectorAll(selector)]
+      .filter(enabled).filter(node => hasLabel(node, createLabel));
+    if (candidates.length === 1) return candidates[0];
+  }
+  const buttons = [...document.querySelectorAll('button, [role="button"]')]
+    .filter(enabled).filter(node => hasLabel(node, createLabel));
+  return buttons.length === 1 ? buttons[0] : null;
 }
 
 function editableInputs(root = document) {
@@ -41,6 +52,17 @@ function editableInputs(root = document) {
 }
 
 function projectEditor(inputsBeforeClick) {
+  const namedInputs = [...document.querySelectorAll(
+    '#chatgpt-project-name, input[name="project-name"]',
+  )].filter(enabled).filter(node => !node.readOnly);
+  if (namedInputs.length > 1) {
+    throw failed("ChatGPT exposed more than one project name field.");
+  }
+  if (namedInputs.length === 1) {
+    const input = namedInputs[0];
+    const scope = input.closest('form, [role="dialog"], dialog, [data-radix-dialog-content], [data-state="open"]');
+    if (scope) return { input, scope };
+  }
   const overlays = [...document.querySelectorAll(
     '[role="dialog"], dialog, [data-radix-dialog-content], [data-state="open"]',
   )].filter(visible);
@@ -61,8 +83,11 @@ function projectEditor(inputsBeforeClick) {
 }
 
 function submitButton(scope) {
-  return [...scope.querySelectorAll('button, [role="button"]')].filter(enabled)
-    .find(node => hasLabel(node, /^(create|create project|t\u1ea1o|t\u1ea1o d\u1ef1 \u00e1n)$/i));
+  const buttons = [...scope.querySelectorAll('button, [role="button"]')].filter(enabled);
+  return buttons.find(node => node.matches('button[type="submit"]')
+    && hasLabel(node, /^(create|create project|t\u1ea1o|t\u1ea1o d\u1ef1 \u00e1n)$/i))
+    || buttons.find(node => hasLabel(node,
+      /^(create|create project|t\u1ea1o|t\u1ea1o d\u1ef1 \u00e1n)$/i));
 }
 
 function setInput(input, value) {

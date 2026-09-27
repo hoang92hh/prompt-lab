@@ -16,6 +16,7 @@ class JobRequest(RequiredJobFields, total=False):
     project_id: str | None
     project_url: str | None
     conversation_mode: Literal["new", "continue"] | None
+    step_id: str | None
 
 class CompletedResponse(TypedDict):
     job_id: str
@@ -54,7 +55,7 @@ def _string(value: object) -> bool:
 
 def validate_request(value: object) -> JobRequest:
     fields = {"job_id", "provider", "action", "content", "options"}
-    optional = {"model", "effort", "project_id", "project_url", "conversation_mode"}
+    optional = {"model", "effort", "project_id", "project_url", "conversation_mode", "step_id"}
     if not isinstance(value, dict) or not fields <= set(value) or set(value) - fields - optional:
         fail(400, "INVALID_REQUEST", "Unsupported request fields.")
     if any(not _string(value[key]) for key in fields - {"options", "content"}):
@@ -74,6 +75,12 @@ def validate_request(value: object) -> JobRequest:
         fail(400, "INVALID_REQUEST", "conversation_mode must be new or continue.")
     if value["action"] != "prompt" and conversation_mode is not None:
         fail(400, "INVALID_REQUEST", "Conversation routing is supported only for prompt jobs.")
+    step_id = value.get("step_id")
+    if step_id is not None and (not isinstance(step_id, str)
+                                or not re.fullmatch(r"step[1-9][0-9]*", step_id)):
+        fail(400, "INVALID_REQUEST", "step_id must use the step<number> format.")
+    if value["action"] != "create_project" and step_id is not None:
+        fail(400, "INVALID_REQUEST", "step_id is supported only for project creation.")
     if value.get("effort") is not None and not _string(value["effort"]):
         fail(400, "INVALID_REQUEST", "effort must be null or a non-blank string.")
     if value.get("effort") and not value.get("model"):
@@ -90,7 +97,7 @@ def validate_request(value: object) -> JobRequest:
         fail(400, "UNSUPPORTED_ACTION", "Unsupported action.")
     if value["action"] == "create_project" and any(value.get(key) for key in (
             "model", "effort", "project_id", "project_url", "conversation_mode")):
-        fail(400, "INVALID_REQUEST", "Project creation only requires a name in content.")
+        fail(400, "INVALID_REQUEST", "Project creation accepts a name and optional step_id.")
     if value["options"]:
         fail(400, "UNSUPPORTED_OPTION", "No options are currently supported.")
     return value

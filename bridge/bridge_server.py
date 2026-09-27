@@ -123,6 +123,20 @@ class BridgeHandler(BaseHTTPRequestHandler):
             if self.command != "GET":
                 fail(405, "METHOD_NOT_ALLOWED", "Use GET for projects.")
             self._send(200, {"projects": self.server.projects.list()})
+        elif path.startswith("/api/projects/"):
+            if self.command != "DELETE":
+                fail(405, "METHOD_NOT_ALLOWED", "Use DELETE to remove a saved project.")
+            if extension_origin:
+                fail(403, "FORBIDDEN_ORIGIN", "Only the local MyTool UI can delete saved projects.")
+            tail = path[len("/api/projects/"):]
+            parts = tail.split("/", 1)
+            if len(parts) != 2 or parts[0] not in {"chatgpt", "claude"}:
+                fail(404, "NOT_FOUND", "Unknown saved project.")
+            project_id = unquote(parts[1], encoding="utf-8", errors="strict")
+            if not project_id or "/" in project_id or len(project_id) > 256:
+                fail(404, "NOT_FOUND", "Unknown saved project.")
+            deleted = self.server.projects.delete(parts[0], project_id)
+            self._send(200, {"deleted": deleted})
         elif path.startswith('/api/outputs/'):
             if self.command == 'GET' and extension_origin:
                 fail(403, 'FORBIDDEN_ORIGIN', 'Output files can only be read by the local MyTool UI.')
@@ -181,7 +195,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 fail(405, "METHOD_NOT_ALLOWED", "Use POST for job creation.")
             request = self._body()
             if isinstance(request, dict) and request.get("project_id"):
-                project = self.server.projects.get(request["project_id"])
+                project = self.server.projects.get(request["project_id"], request.get("provider", "chatgpt"))
                 if request.get("project_url") != project["url"]:
                     fail(400, "INVALID_REQUEST", "Project URL does not match the saved project.")
             self._send(201, manager.enqueue(request))
@@ -212,7 +226,8 @@ class BridgeHandler(BaseHTTPRequestHandler):
                         fail(400, "INVALID_REQUEST", "A prompt result cannot create a project.")
                 record = manager.finish(job_id, response)
                 if isinstance(response, dict) and response.get("status") == "completed" and response.get("project"):
-                    self.server.projects.save(response["project"])
+                    self.server.projects.save(response["project"], request["provider"],
+                                              request.get("step_id", "*"))
                 self._send(200, record)
             elif not result_route and self.command == "GET":
                 self._send(200, manager.get(job_id))

@@ -17,6 +17,8 @@ let modelComparisonRevision = 0;
 let activeStepId = null;
 let activeProvider = "chatgpt";
 let modelControlsReady = false;
+let projectControlsReady = false;
+let projectLoadRevision = 0;
 
 function renderStepShells() {
   const switcher = $("#step-switcher");
@@ -63,6 +65,7 @@ function selectStep(stepId) {
     modelComparisonRevision += 1;
     applyStepModelDefaults(activeProvider, step.id);
   }
+  if (projectControlsReady) void loadProjects("", activeProvider, step.id);
 }
 
 renderStepShells();
@@ -82,6 +85,7 @@ for (const provider of ["chatgpt","claude"]) {
       modelComparisonRevision += 1;
       applyStepModelDefaults(provider, activeStepId);
     }
+    if (projectControlsReady) void loadProjects("", provider, activeStepId);
   });
 }
 
@@ -200,13 +204,41 @@ async function pollConnection() {
   }
 }
 
-async function loadProjects(selectId = "") {
-  projects = (await api("/api/projects")).projects;
-  const select = $("#project");
-  const current = selectId || select.value;
-  select.replaceChildren(new Option("Không dùng project", ""));
-  for (const project of projects) select.add(new Option(project.name, project.id));
-  if (projects.some(project => project.id === current)) select.value = current;
+function projectControls(provider) {
+  if (provider === "chatgpt") {
+    return {select:$("#project"), deleteButton:$("#delete-project")};
+  }
+  if (provider === "claude") {
+    return {select:$("#claude-project"), deleteButton:null};
+  }
+  return null;
+}
+
+function projectMatchesScope(project, provider = activeProvider, stepId = activeStepId) {
+  return project.provider === provider && (project.step_id === "*" || project.step_id === stepId);
+}
+
+function updateProjectActions() {
+  const controls = projectControls("chatgpt");
+  if (!controls?.deleteButton) return;
+  const selected = projects.find(project => project.provider === "chatgpt"
+    && project.id === controls.select.value && projectMatchesScope(project, "chatgpt", activeStepId));
+  controls.deleteButton.disabled = active || activeProvider !== "chatgpt" || !selected;
+}
+
+async function loadProjects(selectId = "", provider = activeProvider, stepId = activeStepId) {
+  const revision = ++projectLoadRevision;
+  const loaded = (await api("/api/projects")).projects;
+  if (revision !== projectLoadRevision) return;
+  projects = loaded;
+  const controls = projectControls(provider);
+  if (!controls?.select) return;
+  const current = selectId || controls.select.value;
+  const visible = projects.filter(project => projectMatchesScope(project, provider, stepId));
+  controls.select.replaceChildren(new Option("Không dùng project", ""));
+  for (const project of visible) controls.select.add(new Option(project.name, project.id));
+  if (visible.some(project => project.id === current)) controls.select.value = current;
+  updateProjectActions();
 }
 
 async function runJob(payload, onSuccess = null, onFailure = null) {
@@ -216,7 +248,7 @@ async function runJob(payload, onSuccess = null, onFailure = null) {
   $("#continue-send").disabled = true;
   $("#create-project").disabled = true;
   $("#check-model").disabled = true;
-  for (const id of ["model", "effort", "project", "check-project"]) $("#" + id).disabled = true;
+  for (const id of ["model", "effort", "project", "check-project", "delete-project"]) $("#" + id).disabled = true;
   if (payload.action !== "sync_model") $("#answer").textContent = "";
   const id = "mytool-" + crypto.randomUUID();
   $("#job").textContent = "Job ID: " + id;
@@ -264,11 +296,14 @@ async function runJob(payload, onSuccess = null, onFailure = null) {
     for (const id of ["model", "project", "check-project"]) $("#" + id).disabled = false;
     $("#effort").disabled = !$("#model").value;
     updateModelCheck();
+    updateProjectActions();
   }
 }
 
 function selectedProjectFields() {
-  const project = projects.find(item => item.id === $("#project").value);
+  const controls = projectControls(activeProvider);
+  const project = projects.find(item => controls?.select && item.id === controls.select.value
+    && projectMatchesScope(item));
   return project ? {project_id: project.id, project_url: project.url} : {};
 }
 
@@ -361,10 +396,11 @@ $("#check-project").addEventListener("click", async () => {
   const id = $("#project").value;
   $("#project-check").textContent = "Đang kiểm tra danh sách project đã lưu...";
   try {
-    await loadProjects(id);
-    const project = projects.find(item => item.id === id);
+    await loadProjects(id, "chatgpt", activeStepId);
+    const project = projects.find(item => item.provider === "chatgpt" && item.id === id
+      && projectMatchesScope(item, "chatgpt", activeStepId));
     $("#project-check").textContent = project
-      ? "Đã lưu: " + project.name + " | ID: " + project.id + " | URL: " + project.url
+      ? "Đã lưu: " + project.name + " | Phạm vi: " + project.step_id + " | ID: " + project.id + " | URL: " + project.url
       : id ? "Project này không còn trong danh sách đã lưu." : "Chưa chọn project. Chọn một project để kiểm tra.";
   } catch (error) {
     $("#project-check").textContent = "Không kiểm tra được project: " + error.message;
@@ -373,11 +409,30 @@ $("#check-project").addEventListener("click", async () => {
 $("#project").addEventListener("change", () => {
   $("#project-check").textContent = "Nhấn Kiểm tra project để đọc thông tin đã lưu.";
   $("#conversation-status").textContent = "Ô 2 sẽ kiểm tra tab ChatGPT hiện tại với project vừa chọn trước khi gửi.";
+  updateProjectActions();
+});
+$("#delete-project").addEventListener("click", async () => {
+  const project = projects.find(item => item.provider === "chatgpt" && item.id === $("#project").value
+    && projectMatchesScope(item, "chatgpt", activeStepId));
+  if (!project || active) return;
+  const confirmed = window.confirm("Xóa “" + project.name + "” khỏi MyTool? Project thật trên ChatGPT sẽ không bị xóa.");
+  if (!confirmed) return;
+  $("#delete-project").disabled = true;
+  $("#project-check").textContent = "Đang xóa project khỏi MyTool...";
+  try {
+    await api("/api/projects/chatgpt/" + encodeURIComponent(project.id), {method:"DELETE"});
+    await loadProjects("", "chatgpt", activeStepId);
+    $("#project-check").textContent = "Đã xóa khỏi MyTool: " + project.name + ". Project trên ChatGPT vẫn được giữ nguyên.";
+  } catch (error) {
+    $("#project-check").textContent = "Không xóa được project: " + error.message;
+  } finally {
+    updateProjectActions();
+  }
 });
 $("#create-project").addEventListener("click", () => {
   const name = $("#project-name").value.trim();
   if (!name) { $("#status").textContent = "Nhập tên project trước."; return; }
-  void runJob({action:"create_project", content:name});
+  void runJob({action:"create_project", content:name, step_id:activeStepId});
 });
 for (const step of stepCatalog) {
   if (step.mount) {
@@ -391,6 +446,7 @@ for (const step of stepCatalog) {
     });
   }
 }
+projectControlsReady = true;
 loadProjects().catch(error => { $("#status").textContent = "Không đọc được project: " + error.message; });
 registerMytoolSession().catch(error => {
   showConnectionWarning("Không đăng ký được phiên MyTool: " + error.message + ". Việc gửi prompt vẫn không bị chặn.");
