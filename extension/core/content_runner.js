@@ -1,4 +1,5 @@
-import { createProject } from "../providers/chatgpt/project_actions.js";
+import { createProject, updateProjectInstructions } from "../providers/chatgpt/project_actions.js";
+import { replaceProjectSources } from "../providers/chatgpt/project_source_actions.js";
 import { chatgptSelectors as S } from "../providers/chatgpt/chatgpt_selectors.js";
 import { ProviderFactory } from "./provider_factory.js";
 import { failure, executionError } from "./execution_errors.js";
@@ -108,6 +109,28 @@ setInterval(() => {
 
 async function execute(job, record) {
   try {
+    if (job.action === "configure_project_from_folder") {
+      const log = step => { record.steps.push(step); console.info("[JOB]", job.job_id, step); };
+      await replaceProjectSources(job.source_files, {log});
+      log("UPDATING PROJECT INSTRUCTIONS");
+      try {
+        await updateProjectInstructions(job.content);
+      } catch (error) {
+        error.message = "AGENTS.md and SKILL.md were replaced, but Project instructions " +
+          "were not confirmed. " + error.message;
+        throw error;
+      }
+      log("PROJECT CONFIGURATION COMPLETE");
+      record.result = { job_id: job.job_id, status: "completed",
+        text: "Đã thay thế AGENTS.md, SKILL.md và cập nhật Project instructions." };
+      return;
+    }
+    if (job.action === "update_project_instructions") {
+      await updateProjectInstructions(job.content);
+      record.result = { job_id: job.job_id, status: "completed",
+        text: "Đã cập nhật Project instructions từ file Markdown." };
+      return;
+    }
     const provider = factory.create(job.provider, {
       log: (step) => { record.steps.push(step); console.info("[JOB]", job.job_id, step); },
     });
@@ -186,7 +209,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true; // Keep the response channel open until UI automation succeeds or fails.
   } else if (message.type === "MYTOOL_EXECUTE") {
     const job = message.job;
-    if (!job || typeof job.job_id !== "string" || !["prompt", "sync_model"].includes(job.action)) {
+    if (!job || typeof job.job_id !== "string"
+        || !["prompt", "sync_model", "update_project_instructions",
+          "configure_project_from_folder"].includes(job.action)) {
       sendResponse({ error: "INVALID_REQUEST", message: "Invalid content-script job." });
       return;
     }

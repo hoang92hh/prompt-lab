@@ -3,10 +3,15 @@ import re
 from urllib.parse import urlsplit
 from typing import Literal, TypedDict
 
+class SourceFile(TypedDict):
+    name: str
+    content: str
+
 class RequiredJobFields(TypedDict):
     job_id: str
     provider: str
-    action: Literal["prompt", "create_project", "sync_model"]
+    action: Literal["prompt", "create_project", "sync_model", "update_project_instructions",
+                    "configure_project_from_folder"]
     content: str
     options: dict[str, object]
 
@@ -17,6 +22,7 @@ class JobRequest(RequiredJobFields, total=False):
     project_url: str | None
     conversation_mode: Literal["new", "continue"] | None
     step_id: str | None
+    source_files: list[SourceFile]
 
 class CompletedResponse(TypedDict):
     job_id: str
@@ -39,7 +45,8 @@ RESULT_ERRORS = {
     "COMPOSER_NOT_FOUND", "COMPOSER_NOT_EMPTY", "COMPOSER_WRITE_FAILED",
     "PROMPT_SEND_FAILED", "ASSISTANT_RESPONSE_NOT_FOUND", "RESPONSE_TIMEOUT",
     "DUPLICATE_EXECUTION", "EXECUTION_STATE_LOST",
-    "PROJECT_CREATE_FAILED", "PROJECT_NOT_FOUND", "PROJECT_NAVIGATION_FAILED",
+    "PROJECT_CREATE_FAILED", "PROJECT_INSTRUCTIONS_FAILED", "PROJECT_NOT_FOUND", "PROJECT_NAVIGATION_FAILED",
+    "PROJECT_SOURCE_DELETE_FAILED", "PROJECT_SOURCE_UPLOAD_FAILED", "PROJECT_SOURCE_UPLOAD_TIMEOUT",
 }
 
 class ProtocolError(Exception):
@@ -55,7 +62,8 @@ def _string(value: object) -> bool:
 
 def validate_request(value: object) -> JobRequest:
     fields = {"job_id", "provider", "action", "content", "options"}
-    optional = {"model", "effort", "project_id", "project_url", "conversation_mode", "step_id"}
+    optional = {"model", "effort", "project_id", "project_url", "conversation_mode", "step_id",
+                "source_files"}
     if not isinstance(value, dict) or not fields <= set(value) or set(value) - fields - optional:
         fail(400, "INVALID_REQUEST", "Unsupported request fields.")
     if any(not _string(value[key]) for key in fields - {"options", "content"}):
@@ -93,11 +101,40 @@ def validate_request(value: object) -> JobRequest:
         fail(400, "INVALID_REQUEST", "options must be a JSON object.")
     if value["provider"] not in {"chatgpt"}:
         fail(400, "UNSUPPORTED_PROVIDER", "Provider is not registered.")
-    if value["action"] not in {"prompt", "create_project", "sync_model"}:
+    if value["action"] not in {"prompt", "create_project", "sync_model",
+                               "update_project_instructions", "configure_project_from_folder"}:
         fail(400, "UNSUPPORTED_ACTION", "Unsupported action.")
     if value["action"] == "create_project" and any(value.get(key) for key in (
             "model", "effort", "project_id", "project_url", "conversation_mode")):
         fail(400, "INVALID_REQUEST", "Project creation accepts a name and optional step_id.")
+    if value["action"] == "update_project_instructions":
+        if not value.get("project_id") or not value.get("project_url"):
+            fail(400, "INVALID_REQUEST", "Project instructions require a saved project ID and URL.")
+        if any(value.get(key) for key in ("model", "effort", "conversation_mode", "step_id")):
+            fail(400, "INVALID_REQUEST", "Project instructions accept only content and project routing fields.")
+    if value["action"] == "configure_project_from_folder":
+        if not value.get("project_id") or not value.get("project_url"):
+            fail(400, "INVALID_REQUEST", "Project folder configuration requires a saved project ID and URL.")
+        if any(value.get(key) for key in ("model", "effort", "conversation_mode", "step_id")):
+            fail(400, "INVALID_REQUEST", "Project folder configuration accepts only content, sources and project routing fields.")
+        source_files = value.get("source_files")
+        if not isinstance(source_files, list) or len(source_files) != 2:
+            fail(400, "INVALID_REQUEST", "source_files must contain AGENTS.md and SKILL.md.")
+        expected_names = {"AGENTS.md", "SKILL.md"}
+        names = set()
+        total_bytes = len(value["content"].encode("utf-8"))
+        for source in source_files:
+            if (not isinstance(source, dict) or set(source) != {"name", "content"}
+                    or not _string(source.get("name")) or not _string(source.get("content"))):
+                fail(400, "INVALID_REQUEST", "Each source file requires a non-blank name and content.")
+            names.add(source["name"])
+            total_bytes += len(source["content"].encode("utf-8"))
+        if names != expected_names:
+            fail(400, "INVALID_REQUEST", "source_files must be exactly AGENTS.md and SKILL.md.")
+        if total_bytes > 750 * 1024:
+            fail(400, "INVALID_REQUEST", "Project folder configuration exceeds 750 KiB.")
+    elif "source_files" in value:
+        fail(400, "INVALID_REQUEST", "source_files is supported only for project folder configuration.")
     if value["options"]:
         fail(400, "UNSUPPORTED_OPTION", "No options are currently supported.")
     return value

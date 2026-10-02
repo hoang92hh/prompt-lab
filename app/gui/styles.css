@@ -29,6 +29,12 @@ input:focus-visible,select:focus-visible,textarea:focus-visible,button:focus-vis
 textarea { min-height:210px; resize:vertical; line-height:1.5; }
 .row { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:7px; align-items:center; }
 .actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
+.file-picker-row { display:flex; align-items:center; gap:9px; min-width:0; }
+.file-picker-row button { flex:none; }
+.file-picker-row span { min-width:0; color:#52616b; font-size:.84rem; overflow-wrap:anywhere; }
+.config-file-list { display:grid; gap:4px; margin:9px 0 0; padding:0; list-style:none; color:#657381; font-size:.82rem; }
+.config-file-list li[data-ready="true"] { color:#237a3b; }
+.config-file-list li[data-ready="false"] { color:#a12622; }
 button.primary,button.secondary { padding:10px 13px; border-radius:8px; font-weight:650; }
 button.primary { border:1px solid #1769aa; color:white; background:#1769aa; }
 button.secondary { border:1px solid #a8bed0; color:#1769aa; background:#fff; }

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "MyTool Bridge Extension",
-  "version": "0.5.8",
+  "version": "0.6.0",
   "minimum_chrome_version": "120",
   "description": "Local Bridge for ChatGPT projects, model selection and prompts.",
   "permissions": [
@@ -39,7 +39,8 @@
         "providers/chatgpt/chatgpt_provider.js",
         "providers/chatgpt/chatgpt_selectors.js",
         "providers/chatgpt/chatgpt_models.js",
-        "providers/chatgpt/project_actions.js"
+        "providers/chatgpt/project_actions.js",
+        "providers/chatgpt/project_source_actions.js"
       ],
       "matches": [
         "https://chatgpt.com/*"

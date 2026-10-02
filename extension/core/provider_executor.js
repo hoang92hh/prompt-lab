@@ -119,6 +119,12 @@ export class ProviderExecutor {
         await chrome.tabs.update(tabId, { url: "https://chatgpt.com/projects", active: true });
       }
       await ready(tabId, "https://chatgpt.com/projects");
+    } else if (job.action === "update_project_instructions"
+        || job.action === "configure_project_from_folder") {
+      const target = job.action === "configure_project_from_folder"
+        ? job.project_url + "?tab=sources" : job.project_url;
+      await navigate(tabId, target);
+      await ready(tabId, job.project_url.replace(/\/project\/?$/, ""));
     } else if (job.action === "prompt") {
       await openPromptTarget(tabId, job);
     } else if (job.project_url) {
@@ -171,7 +177,8 @@ export class ProviderExecutor {
       throw executionError("PROJECT_CREATE_FAILED", "Could not confirm the new project URL. Check ChatGPT.");
     }
     let loggedSteps = 0;
-    while (Date.now() - active.startedAt < 200000) {
+    const executionTimeout = active.action === "configure_project_from_folder" ? 420000 : 200000;
+    while (Date.now() - active.startedAt < executionTimeout) {
       let record;
       try { record = await message(active.tabId, { type: "MYTOOL_STATUS", job_id: active.job_id }); }
       catch { throw executionError("EXECUTION_STATE_LOST", "Tab closed, reloaded or content script unavailable; prompt will not be resent."); }
@@ -185,6 +192,10 @@ export class ProviderExecutor {
       }
       await sleep(1000);
     }
-    return failure(active.job_id, executionError("RESPONSE_TIMEOUT", "Content execution exceeded the 200-second transport deadline."));
+    return failure(active.job_id, executionError(
+      "RESPONSE_TIMEOUT",
+      "Content execution exceeded the " + Math.round(executionTimeout / 1000) +
+        "-second transport deadline.",
+    ));
   }
 }

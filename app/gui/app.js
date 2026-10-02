@@ -19,6 +19,11 @@ let activeProvider = "chatgpt";
 let modelControlsReady = false;
 let projectControlsReady = false;
 let projectLoadRevision = 0;
+let projectInstructionsFile = null;
+const MAX_PROJECT_INSTRUCTIONS_FILE_BYTES = 750 * 1024;
+let projectConfigBundle = null;
+const PROJECT_CONFIG_FILE_NAMES = ["INSTRUCTIONS.md", "AGENTS.md", "SKILL.md"];
+const MAX_PROJECT_CONFIG_BYTES = 750 * 1024;
 
 function renderStepShells() {
   const switcher = $("#step-switcher");
@@ -224,6 +229,12 @@ function updateProjectActions() {
   const selected = projects.find(project => project.provider === "chatgpt"
     && project.id === controls.select.value && projectMatchesScope(project, "chatgpt", activeStepId));
   controls.deleteButton.disabled = active || activeProvider !== "chatgpt" || !selected;
+  $("#choose-project-instructions").disabled = active || activeProvider !== "chatgpt";
+  $("#upload-project-instructions").disabled = active || activeProvider !== "chatgpt"
+    || !selected || !projectInstructionsFile;
+  $("#choose-project-config-folder").disabled = active || activeProvider !== "chatgpt";
+  $("#apply-project-config").disabled = active || activeProvider !== "chatgpt"
+    || !selected || !projectConfigBundle;
 }
 
 async function loadProjects(selectId = "", provider = activeProvider, stepId = activeStepId) {
@@ -248,7 +259,11 @@ async function runJob(payload, onSuccess = null, onFailure = null) {
   $("#continue-send").disabled = true;
   $("#create-project").disabled = true;
   $("#check-model").disabled = true;
-  for (const id of ["model", "effort", "project", "check-project", "delete-project"]) $("#" + id).disabled = true;
+  for (const id of ["model", "effort", "project", "check-project", "delete-project",
+    "choose-project-instructions", "upload-project-instructions", "project-instructions-file",
+    "choose-project-config-folder", "apply-project-config", "project-config-folder"]) {
+    $("#" + id).disabled = true;
+  }
   if (payload.action !== "sync_model") $("#answer").textContent = "";
   const id = "mytool-" + crypto.randomUUID();
   $("#job").textContent = "Job ID: " + id;
@@ -258,7 +273,7 @@ async function runJob(payload, onSuccess = null, onFailure = null) {
       method:"POST", headers:{"Content-Type":"application/json"},
       body:JSON.stringify({job_id:id, provider:"chatgpt", options:{}, ...payload})
     });
-    const deadline = Date.now() + 240000;
+    const deadline = Date.now() + (payload.action === "configure_project_from_folder" ? 450000 : 240000);
     while (Date.now() < deadline) {
       const record = await api("/api/jobs/" + encodeURIComponent(id));
       $("#status").textContent = "Trạng thái: " + record.status;
@@ -294,6 +309,8 @@ async function runJob(payload, onSuccess = null, onFailure = null) {
     $("#continue-send").disabled = false;
     $("#create-project").disabled = false;
     for (const id of ["model", "project", "check-project"]) $("#" + id).disabled = false;
+    $("#project-instructions-file").disabled = false;
+    $("#project-config-folder").disabled = false;
     $("#effort").disabled = !$("#model").value;
     updateModelCheck();
     updateProjectActions();
@@ -410,6 +427,134 @@ $("#project").addEventListener("change", () => {
   $("#project-check").textContent = "Nhấn Kiểm tra project để đọc thông tin đã lưu.";
   $("#conversation-status").textContent = "Ô 2 sẽ kiểm tra tab ChatGPT hiện tại với project vừa chọn trước khi gửi.";
   updateProjectActions();
+});
+$("#choose-project-instructions").addEventListener("click", () => {
+  if (!active && activeProvider === "chatgpt") $("#project-instructions-file").click();
+});
+$("#project-instructions-file").addEventListener("change", async event => {
+  const file = event.target.files?.[0] || null;
+  projectInstructionsFile = null;
+  $("#project-instructions-file-name").textContent = "Chưa chọn file";
+  if (!file) { updateProjectActions(); return; }
+  if (!/\.md$/i.test(file.name)) {
+    $("#project-instructions-check").textContent = "File không hợp lệ. Hãy chọn file có đuôi .md.";
+    event.target.value = "";
+    updateProjectActions();
+    return;
+  }
+  if (file.size > MAX_PROJECT_INSTRUCTIONS_FILE_BYTES) {
+    $("#project-instructions-check").textContent = "File quá lớn. Giới hạn của MyTool là 750 KiB.";
+    event.target.value = "";
+    updateProjectActions();
+    return;
+  }
+  try {
+    const content = (await file.text()).replace(/^\uFEFF/, "");
+    if (!content.trim()) throw new Error("File Markdown không có nội dung.");
+    projectInstructionsFile = {name:file.name, size:file.size, content};
+    $("#project-instructions-file-name").textContent = file.name + " (" + file.size + " bytes)";
+    $("#project-instructions-check").textContent = "Đã đọc file. Nhấn Cập nhật chỉ dẫn để ghi đè Project instructions của project đang chọn.";
+  } catch (error) {
+    event.target.value = "";
+    $("#project-instructions-check").textContent = "Không đọc được file: " + error.message;
+  }
+  updateProjectActions();
+});
+$("#upload-project-instructions").addEventListener("click", () => {
+  const project = selectedProjectFields();
+  if (active || !projectInstructionsFile || !project.project_id) {
+    $("#project-instructions-check").textContent = "Hãy chọn project và file Markdown trước.";
+    return;
+  }
+  $("#project-instructions-check").textContent = "Đang cập nhật Project instructions trên ChatGPT...";
+  void runJob({action:"update_project_instructions", content:projectInstructionsFile.content, ...project},
+    result => {
+      $("#project-instructions-check").textContent = result.text;
+      $("#answer").textContent = result.text;
+    },
+    message => { $("#project-instructions-check").textContent = message; });
+});
+function resetProjectConfigBundle() {
+  projectConfigBundle = null;
+  $("#project-config-folder-name").textContent = "Chưa chọn folder";
+  for (const name of PROJECT_CONFIG_FILE_NAMES) {
+    const row = document.querySelector('[data-config-file="' + name + '"]');
+    row.dataset.ready = "false";
+    row.textContent = "○ " + name;
+  }
+}
+
+$("#choose-project-config-folder").addEventListener("click", () => {
+  if (active || activeProvider !== "chatgpt") return;
+  $("#project-config-folder").value = "";
+  $("#project-config-folder").click();
+});
+
+$("#project-config-folder").addEventListener("change", async event => {
+  const files = [...(event.target.files || [])];
+  resetProjectConfigBundle();
+  if (!files.length) { updateProjectActions(); return; }
+  try {
+    if (files.length !== PROJECT_CONFIG_FILE_NAMES.length) {
+      throw new Error("Folder phải chứa đúng ba file bắt buộc và không có file khác.");
+    }
+    const paths = files.map(file => (file.webkitRelativePath || "").split("/").filter(Boolean));
+    if (paths.some(parts => parts.length !== 2) || new Set(paths.map(parts => parts[0])).size !== 1) {
+      throw new Error("Ba file phải nằm trực tiếp trong cùng một folder.");
+    }
+    const byName = new Map(files.map(file => [file.name, file]));
+    if (byName.size !== PROJECT_CONFIG_FILE_NAMES.length
+        || PROJECT_CONFIG_FILE_NAMES.some(name => !byName.has(name))) {
+      throw new Error("Folder phải có đúng INSTRUCTIONS.md, AGENTS.md và SKILL.md.");
+    }
+    const totalBytes = files.reduce((sum, file) => sum + file.size, 0);
+    if (totalBytes > MAX_PROJECT_CONFIG_BYTES) {
+      throw new Error("Tổng dung lượng ba file vượt quá 750 KiB.");
+    }
+    const contents = {};
+    for (const name of PROJECT_CONFIG_FILE_NAMES) {
+      const content = (await byName.get(name).text()).replace(/^\uFEFF/, "");
+      if (!content.trim()) throw new Error(name + " không có nội dung.");
+      contents[name] = content;
+      const row = document.querySelector('[data-config-file="' + name + '"]');
+      row.dataset.ready = "true";
+      row.textContent = "✓ " + name + " (" + byName.get(name).size + " bytes)";
+    }
+    projectConfigBundle = {
+      folderName:paths[0][0],
+      instructions:contents["INSTRUCTIONS.md"],
+      sourceFiles:[
+        {name:"AGENTS.md", content:contents["AGENTS.md"]},
+        {name:"SKILL.md", content:contents["SKILL.md"]},
+      ],
+    };
+    $("#project-config-folder-name").textContent = projectConfigBundle.folderName;
+    $("#project-config-check").textContent =
+      "Folder hợp lệ. Khi áp dụng, AGENTS.md và SKILL.md cũ sẽ bị xóa trước khi upload bản mới.";
+  } catch (error) {
+    event.target.value = "";
+    $("#project-config-check").textContent = "Folder không hợp lệ: " + error.message;
+  }
+  updateProjectActions();
+});
+
+$("#apply-project-config").addEventListener("click", () => {
+  const project = selectedProjectFields();
+  if (active || !projectConfigBundle || !project.project_id) {
+    $("#project-config-check").textContent = "Hãy chọn project và folder cấu hình hợp lệ trước.";
+    return;
+  }
+  if (!window.confirm("Thay thế AGENTS.md, SKILL.md và Project instructions của project đang chọn?")) return;
+  $("#project-config-check").textContent = "Đang thay thế Sources và Project instructions trên ChatGPT...";
+  void runJob({
+    action:"configure_project_from_folder",
+    content:projectConfigBundle.instructions,
+    source_files:projectConfigBundle.sourceFiles,
+    ...project,
+  }, result => {
+    $("#project-config-check").textContent = result.text;
+    $("#answer").textContent = result.text;
+  }, message => { $("#project-config-check").textContent = message; });
 });
 $("#delete-project").addEventListener("click", async () => {
   const project = projects.find(item => item.provider === "chatgpt" && item.id === $("#project").value

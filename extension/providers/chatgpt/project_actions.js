@@ -2,6 +2,9 @@
 const visible = node => !!node && node.isConnected && node.getClientRects().length > 0;
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 const failed = message => Object.assign(new Error(message), { code: "PROJECT_CREATE_FAILED" });
+const instructionsFailed = message =>
+  Object.assign(new Error(message), { code: "PROJECT_INSTRUCTIONS_FAILED" });
+const normalize = text => text.replace(/\r\n?/g, "\n").trim();
 
 function labels(node) {
   return [node.innerText, node.getAttribute?.("aria-label"), node.getAttribute?.("title"),
@@ -26,6 +29,16 @@ async function waitFor(find, message, timeout = 12000) {
     await pause(150);
   }
   throw failed(message);
+}
+
+async function waitForInstructions(find, message, timeout = 12000) {
+  const end = Date.now() + timeout;
+  while (Date.now() < end) {
+    const found = find();
+    if (found) return found;
+    await pause(150);
+  }
+  throw instructionsFailed(message);
 }
 
 function createPageButton() {
@@ -90,12 +103,12 @@ function submitButton(scope) {
       /^(create|create project|t\u1ea1o|t\u1ea1o d\u1ef1 \u00e1n)$/i));
 }
 
-function setInput(input, value) {
+function setInput(input, value, fail = failed) {
   input.focus();
   const prototype = input instanceof HTMLTextAreaElement
     ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
   const setter = Object.getOwnPropertyDescriptor(prototype, "value")?.set;
-  if (!setter) throw failed("ChatGPT project name field cannot be edited.");
+  if (!setter) throw fail("ChatGPT field cannot be edited.");
   setter.call(input, value);
   input.dispatchEvent(new InputEvent("input", { bubbles: true, data: value, inputType: "insertText" }));
   input.dispatchEvent(new Event("change", { bubbles: true }));
@@ -118,4 +131,105 @@ export async function createProject(name) {
   const submit = await waitFor(() => submitButton(editor.scope),
     "The Create button in the project creation window did not become available.");
   submit.click();
+}
+
+function projectActionsButton() {
+  if (!/^\/g\/g-p-[^/]+\/project\/?$/.test(location.pathname)) return null;
+  const candidates = [...document.querySelectorAll(
+    'button[aria-label="Project actions"][aria-haspopup="menu"]',
+  )].filter(enabled);
+  if (candidates.length > 1) {
+    throw instructionsFailed("ChatGPT exposed more than one Project actions button.");
+  }
+  return candidates[0] || null;
+}
+
+function projectSettingsItem() {
+  const openMenus = [...document.querySelectorAll('[role="menu"][data-state="open"], [role="menu"]')]
+    .filter(visible);
+  const candidates = openMenus.flatMap(menu => [...menu.querySelectorAll('[role="menuitem"]')])
+    .filter(enabled)
+    .filter(node => hasLabel(node, /^(project settings|cài đặt dự án)$/i));
+  if (candidates.length > 1) {
+    throw instructionsFailed("ChatGPT exposed more than one Project settings menu item.");
+  }
+  return candidates[0] || null;
+}
+
+function settingsForm() {
+  const forms = [...document.querySelectorAll("form")].filter(visible).filter(form => {
+    const heading = form.querySelector("h1, h2, h3, [role=heading]");
+    return heading && /^(project settings|cài đặt dự án)$/i.test(heading.innerText.trim());
+  });
+  if (forms.length > 1) {
+    throw instructionsFailed("ChatGPT exposed more than one Project settings form.");
+  }
+  return forms[0] || null;
+}
+
+async function openProjectSettings() {
+  const trigger = await waitForInstructions(projectActionsButton,
+    "The Project actions button was not found.", 15000);
+  trigger.click();
+  const item = await waitForInstructions(projectSettingsItem,
+    "The Project settings menu item did not appear.");
+  item.click();
+  return waitForInstructions(settingsForm, "The Project settings form did not appear.");
+}
+
+function instructionsEditor(form) {
+  const candidates = [...form.querySelectorAll('textarea[name="project-instructions"]')]
+    .filter(enabled).filter(node => !node.readOnly);
+  if (candidates.length > 1) {
+    throw instructionsFailed("ChatGPT exposed more than one Project instructions field.");
+  }
+  return candidates[0] || null;
+}
+
+function settingsButton(form, pattern, submit = false) {
+  const selector = submit ? 'button[type="submit"]' : 'button, [role="button"]';
+  const candidates = [...form.querySelectorAll(selector)].filter(enabled)
+    .filter(node => hasLabel(node, pattern));
+  if (candidates.length > 1) {
+    throw instructionsFailed("ChatGPT exposed more than one matching Project settings action.");
+  }
+  return candidates[0] || null;
+}
+
+async function closeVerifiedSettings(form) {
+  const cancel = await waitForInstructions(() => settingsButton(form, /^(cancel|hủy)$/i),
+    "The Cancel button in Project settings was not found.");
+  cancel.click();
+  await waitForInstructions(() => !form.isConnected || !visible(form),
+    "The verified Project settings form did not close.");
+}
+
+export async function updateProjectInstructions(content) {
+  if (typeof content !== "string" || !content.trim()) {
+    throw instructionsFailed("Project instructions must be non-blank.");
+  }
+  if (!/^\/g\/g-p-[^/]+\/project\/?$/.test(location.pathname)) {
+    throw instructionsFailed("ChatGPT is not on the selected project page.");
+  }
+
+  const form = await openProjectSettings();
+  const editor = await waitForInstructions(() => instructionsEditor(form),
+    "The Project instructions field was not found.");
+  setInput(editor, content, instructionsFailed);
+  if (normalize(editor.value) !== normalize(content)) {
+    throw instructionsFailed("ChatGPT did not accept the complete Project instructions.");
+  }
+  const save = await waitForInstructions(() => settingsButton(form, /^(save|lưu)$/i, true),
+    "The Save button in Project settings did not become available.");
+  save.click();
+  await waitForInstructions(() => !form.isConnected || !visible(form),
+    "Project settings did not close after Save.", 15000);
+
+  const verificationForm = await openProjectSettings();
+  const verificationEditor = await waitForInstructions(() => instructionsEditor(verificationForm),
+    "The Project instructions field was not found during verification.");
+  if (normalize(verificationEditor.value) !== normalize(content)) {
+    throw instructionsFailed("Saved Project instructions do not match the Markdown file.");
+  }
+  await closeVerifiedSettings(verificationForm);
 }

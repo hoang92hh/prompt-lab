@@ -37,6 +37,27 @@
           <select id="project"><option value="">Không dùng project</option></select>
           <div class="actions"><button id="check-project" class="secondary" type="button">Kiểm tra project</button><button id="delete-project" class="secondary" type="button" disabled>Xóa khỏi MyTool</button></div>
           <div id="project-check" class="notice" role="status">Chọn project để kiểm tra thông tin đã lưu.</div>
+          <label for="project-instructions-file">File chỉ dẫn project (.md)</label>
+          <input id="project-instructions-file" class="visually-hidden" type="file" accept=".md,text/markdown">
+          <div class="file-picker-row">
+            <button id="choose-project-instructions" class="secondary" type="button">Chọn file Markdown</button>
+            <span id="project-instructions-file-name">Chưa chọn file</span>
+          </div>
+          <div class="actions"><button id="upload-project-instructions" class="secondary" type="button" disabled>Cập nhật chỉ dẫn</button></div>
+          <div id="project-instructions-check" class="notice" role="status">Chọn project và file Markdown để cập nhật Project instructions.</div>
+          <label for="project-config-folder">Folder cấu hình project</label>
+          <input id="project-config-folder" class="visually-hidden" type="file" webkitdirectory directory multiple>
+          <div class="file-picker-row">
+            <button id="choose-project-config-folder" class="secondary" type="button">Chọn folder</button>
+            <span id="project-config-folder-name">Chưa chọn folder</span>
+          </div>
+          <ul id="project-config-files" class="config-file-list" aria-label="Các file cấu hình bắt buộc">
+            <li data-config-file="INSTRUCTIONS.md">○ INSTRUCTIONS.md</li>
+            <li data-config-file="AGENTS.md">○ AGENTS.md</li>
+            <li data-config-file="SKILL.md">○ SKILL.md</li>
+          </ul>
+          <div class="actions"><button id="apply-project-config" class="secondary" type="button" disabled>Áp dụng folder vào project</button></div>
+          <div id="project-config-check" class="notice" role="status">Folder phải chứa đúng ba file Markdown bắt buộc. Source cũ cùng tên sẽ bị thay thế.</div>
           <label for="model">Model</label>
           <select id="model"><option value="">Chọn model</option></select>
           <label for="effort">Mức suy luận</label>

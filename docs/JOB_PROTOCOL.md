@@ -9,6 +9,8 @@ MyTool communicates with the local Bridge over HTTP at `127.0.0.1:8765`. The Chr
 - `prompt`: `content` is a non-blank question. Omit `model` and `effort`; the extension uses the current ChatGPT website selection without inspecting it.
 - `create_project`: `content` is a non-blank project name. The optional `step_id` uses `step<number>` (for example `step1` or `step4`) and scopes the saved project to that UI step.
 - `sync_model`: checks and synchronizes the website model and reasoning level without writing or sending a prompt. Requires both `model` and `effort`. `content` must be a string and may be empty; its value is ignored.
+- `update_project_instructions`: replaces the selected project's instructions with the non-blank Markdown text in `content`. Requires the saved `project_id` and `project_url`; it does not upload the source file as a project file.
+- `configure_project_from_folder`: replaces the selected project's `AGENTS.md` and `SKILL.md` Sources, then replaces Project instructions with `content` from `INSTRUCTIONS.md`. Requires `project_id`, `project_url`, and `source_files` containing exactly those two non-blank Markdown files. The combined UTF-8 content is limited to 750 KiB.
 
 Prompt and sync jobs can include `project_id` and `project_url`. MyTool verifies the saved project ID and URL before enqueueing and the extension selects that project's tab using the normal execution path.
 
@@ -23,6 +25,10 @@ Each job moves through `queued`, `processing`, and either `completed` or `error`
 A completed sync returns `job_id`, `status: "completed"` and `text` indicating whether the model/effort already matched or were synchronized. It does not return an assistant response. Sync jobs share the same queue, duplicate protection and terminal error handling as prompt jobs.
 
 A completed prompt returns `{ "job_id": "...", "status": "completed", "text": "..." }`. A completed project creation additionally returns `project` with `id`, `name`, and `url`. The Bridge saves that project to JSON only after confirming the result shape and project URL. An error returns `job_id`, `status: "error"`, `error`, and `message`.
+
+A completed project-instructions update returns the normal completed shape with a confirmation in `text`. The extension opens the exact saved project URL, updates the Project settings form, saves once, then reopens the form to verify the persisted text before reporting success.
+
+For folder configuration, the extension opens the project's Sources tab, deletes every existing source named `AGENTS.md` or `SKILL.md`, uploads both replacements in one multi-file input event, and waits up to five minutes for both Preview controls. It then updates and verifies Project instructions. This sequence is not atomic: if upload fails after deletion, the error reports the removed names and the extension never retries the upload automatically.
 
 The UI reads `GET /api/jobs/{id}` for status and `GET /api/projects` for saved projects. Saved records include `provider` and `step_id`; legacy records without those fields are read as ChatGPT projects with the wildcard step `*`. `DELETE /api/projects/{provider}/{project_id}` removes only the local MyTool record and never deletes the website project. Project creation is performed through the ChatGPT web UI. ChatGPT page changes can make selectors fail; in that case the extension reports an error without saving a project record.
 
