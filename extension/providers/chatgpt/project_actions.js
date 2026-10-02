@@ -41,6 +41,16 @@ async function waitForInstructions(find, message, timeout = 12000) {
   throw instructionsFailed(message);
 }
 
+async function waitForOptional(find, timeout = 1500) {
+  const end = Date.now() + timeout;
+  while (Date.now() < end) {
+    const found = find();
+    if (found) return found;
+    await pause(150);
+  }
+  return null;
+}
+
 function createPageButton() {
   if (!/^\/projects\/?$/.test(location.pathname)) return null;
   const createLabel = /^(create|create project|t\u1ea1o|t\u1ea1o d\u1ef1 \u00e1n)$/i;
@@ -167,14 +177,48 @@ function settingsForm() {
   return forms[0] || null;
 }
 
-async function openProjectSettings() {
-  const trigger = await waitForInstructions(projectActionsButton,
-    "The Project actions button was not found.", 15000);
-  trigger.click();
-  const item = await waitForInstructions(projectSettingsItem,
-    "The Project settings menu item did not appear.");
+function projectActionsMenuOpen(trigger) {
+  return trigger?.getAttribute("aria-expanded") === "true"
+    || trigger?.getAttribute("data-state") === "open";
+}
+
+async function openVisibleProjectSettingsItem(item) {
   item.click();
   return waitForInstructions(settingsForm, "The Project settings form did not appear.");
+}
+
+async function openProjectSettings() {
+  const existingForm = settingsForm();
+  if (existingForm) return existingForm;
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const existingItem = projectSettingsItem();
+    if (existingItem) return openVisibleProjectSettingsItem(existingItem);
+
+    let trigger = await waitForInstructions(projectActionsButton,
+      "The Project actions button was not found.", 15000);
+
+    // Saving the form can leave the Radix trigger marked as open briefly. Clicking it
+    // immediately would close the menu and make the settings item appear to be missing.
+    if (projectActionsMenuOpen(trigger)) {
+      const pendingItem = await waitForOptional(projectSettingsItem);
+      if (pendingItem) return openVisibleProjectSettingsItem(pendingItem);
+
+      trigger.click();
+      await waitForOptional(() => {
+        const current = projectActionsButton();
+        return current && !projectActionsMenuOpen(current) ? current : null;
+      }, 2500);
+      trigger = await waitForInstructions(projectActionsButton,
+        "The Project actions button was not found.");
+    }
+
+    trigger.click();
+    const item = await waitForOptional(projectSettingsItem, 6000);
+    if (item) return openVisibleProjectSettingsItem(item);
+  }
+
+  throw instructionsFailed("The Project settings menu item did not appear.");
 }
 
 function instructionsEditor(form) {
